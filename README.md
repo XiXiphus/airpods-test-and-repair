@@ -1,6 +1,8 @@
+[中文版](README_zh.md) | **English**
+
 # AirPods Test and Repair
 
-**听得见吗 / Can You Hear Me?** - A native macOS diagnostic and repair tool for AirPods.
+A native macOS diagnostic and repair tool for AirPods.
 
 When your AirPods connect but produce no sound, distorted audio, or microphone issues, this app helps you diagnose and fix the problem without restarting your Mac.
 
@@ -79,21 +81,21 @@ cd airpods-test-and-repair
 ./build.sh
 ```
 
-This compiles the app into `听得见吗.app` in the project directory. No Xcode required - just the Swift toolchain that comes with Xcode Command Line Tools.
+No Xcode required - just the Swift toolchain that comes with Xcode Command Line Tools.
 
 ## Install
 
 After building, move the app to your preferred location:
 
 ```bash
-# Option 1: User Applications
+# User Applications
 cp -r "听得见吗.app" ~/Applications/
 
-# Option 2: System Applications (requires admin)
+# Or system-wide (requires admin)
 sudo cp -r "听得见吗.app" /Applications/
 ```
 
-Or simply double-click `听得见吗.app` to run without installing.
+Or simply double-click the `.app` to run without installing.
 
 ## Usage
 

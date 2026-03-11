@@ -675,7 +675,7 @@ struct ContentView: View {
                     .foregroundColor(.accentColor)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text("听得见吗")
+                Text("AirPods Fix")
                     .font(.system(size: 15, weight: .semibold))
                 HStack(spacing: 4) {
                     Circle()
@@ -1178,7 +1178,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "听得见吗"
+        window.title = "AirPods Fix"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.contentView = hostingView

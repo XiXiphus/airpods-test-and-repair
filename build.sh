@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-APP_NAME="听得见吗"
+APP_NAME="AirPods Fix"
 BUNDLE_DIR="$APP_NAME.app"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

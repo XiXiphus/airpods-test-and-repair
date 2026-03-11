@@ -1,6 +1,6 @@
 **中文** | [English](README.md)
 
-# 听得见吗
+# AirPods Fix
 
 一个原生 macOS 应用，专门用来诊断和修复 AirPods 音频问题。
 
@@ -89,13 +89,13 @@ cd airpods-test-and-repair
 
 ```bash
 # 用户应用目录
-cp -r "听得见吗.app" ~/Applications/
+cp -r "AirPods Fix.app" ~/Applications/
 
 # 或者系统应用目录（需要管理员权限）
-sudo cp -r "听得见吗.app" /Applications/
+sudo cp -r "AirPods Fix.app" /Applications/
 ```
 
-也可以直接双击 `听得见吗.app` 运行，不用安装。
+也可以直接双击 `AirPods Fix.app` 运行，不用安装。
 
 ## 使用方法
 

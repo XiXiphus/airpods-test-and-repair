@@ -89,10 +89,10 @@ After building, move the app to your preferred location:
 
 ```bash
 # User Applications
-cp -r "听得见吗.app" ~/Applications/
+cp -r "AirPods Fix.app" ~/Applications/
 
 # Or system-wide (requires admin)
-sudo cp -r "听得见吗.app" /Applications/
+sudo cp -r "AirPods Fix.app" /Applications/
 ```
 
 Or simply double-click the `.app` to run without installing.

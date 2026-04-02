@@ -1,136 +1,81 @@
 [中文版](README_zh.md) | **English**
 
-# AirPods Test and Repair
+# AirPods Fix
 
-A native macOS diagnostic and repair tool for AirPods.
+A native macOS app for diagnosing and repairing common AirPods audio problems on macOS.
 
-When your AirPods connect but produce no sound, distorted audio, or microphone issues, this app helps you diagnose and fix the problem without restarting your Mac.
+It helps when AirPods are connected but have no sound, degraded audio quality, wrong output routing, mute/volume issues, or microphone problems.
+
+## End Users
+
+For most people, the right path is the packaged app from GitHub Releases.
+
+1. Download the latest `.dmg`
+2. Open the disk image
+3. Drag `AirPods Fix.app` into `Applications`
+4. Launch the app normally
+
+You do not need Xcode, Xcode Command Line Tools, or a local Swift toolchain just to run the app.
+
+Current releases may be unsigned. If macOS blocks the first launch, Control-click the app and choose `Open`, or allow it in `System Settings -> Privacy & Security` and launch it again.
+
+## Developers
+
+Build from source only if you want to work on the project itself.
+
+- macOS 13 or later
+- Xcode Command Line Tools
+
+Useful commands:
+
+```bash
+./build.sh
+./package-release.sh
+```
+
+- `./build.sh` builds `AirPods Fix.app`
+- `./package-release.sh` builds the app and creates a release `.dmg`
+- Pushing a `v*` tag triggers GitHub Actions to build and publish a release artifact
+
+More packaging and release notes are in [RUNTIME.md](RUNTIME.md).
+
+## Runtime Dependencies
+
+Runtime behavior depends on how the app was packaged.
+
+- GitHub Release builds are expected to bundle `blueutil` inside the app
+- Local builds use a system-installed `blueutil` if one is available
+- If `blueutil` is missing, the app still works for scanning, diagnostics, speaker test, microphone test, soft repair, and medium repair
+- If `blueutil` is missing, only Bluetooth reconnect is unavailable
+
+The app also requests microphone permission for the microphone test. Everything else works without microphone access.
 
 ## Features
 
-### Device Detection & Battery
+- Detects connected AirPods and shows battery levels
+- Supports choosing the target device when multiple AirPods pairs are connected
+- Diagnoses output routing, stereo/mono mode, sample rate, mute state, and low volume
+- Includes speaker and microphone test tools
+- Provides staged repair:
+  - soft fix: refresh audio routing
+  - medium fix: restart `coreaudiod`
+  - hard fix: Bluetooth reconnect
+- Temporarily mutes system output during route refresh, then restores the original mute state, so fallback speaker switching does not blast audio through the MacBook speakers
+- Shows a timestamped diagnostic log
 
-- Auto-detects all connected AirPods via Bluetooth
-- Shows real-time battery levels for left earbud, right earbud, and charging case
-- Displays connection status with color-coded indicators (green/yellow/red)
+## Basic Usage
 
-### Audio Diagnostics
-
-- Checks if AirPods is the current default output device
-- Detects audio channel configuration (stereo vs mono)
-- Reads sample rate (24kHz, 44.1kHz, 48kHz) to identify audio mode:
-  - **Stereo mode** (44.1kHz/48kHz): Full quality music playback
-  - **Mono 24kHz**: Reduced quality, usually a routing issue
-  - **Voice call mode** (8kHz/16kHz): Mic active, lower speaker quality
-- Monitors system volume and mute status
-- Flags issues: wrong output device, muted audio, extremely low volume
-
-### Speaker Test
-
-Plays system test sounds (Ping + Glass) through AirPods so you can confirm audio output is working on both earbuds.
-
-### Microphone Test
-
-Real-time microphone level monitoring with:
-
-- RMS-based level meter with smooth animation
-- Signal quality indicator: Silent / Weak / Normal / Loud / Very Loud
-- Peak level marker with auto-decay
-- Color-coded gradient bar (green -> yellow -> orange -> red)
-- Auto-retry on silent detection (handles permission grant delays)
-
-### Audio Repair (3 Levels)
-
-**1. Soft Fix** - Audio route refresh (no service interruption)
-
-- Unmutes system if muted
-- Boosts volume if below 10%
-- Switches output to built-in speakers, then back to AirPods
-- Forces macOS to rebuild the audio route without touching core services
-
-**2. Medium Fix** - Restart `coreaudiod`
-
-- Kills and restarts macOS core audio daemon
-- Brief audio interruption (~3 seconds)
-- Re-diagnoses audio state after recovery
-
-**3. Hard Fix** - Bluetooth reconnect
-
-- Disconnects AirPods via `blueutil`
-- Waits for Bluetooth handshake to fully close
-- Reconnects and rebuilds audio channels
-- Runs diagnostics after reconnection to verify
-
-Each repair level shows a real-time progress bar with step descriptions.
-
-### Diagnostic Log
-
-Expandable log panel with timestamped entries showing every action taken - useful for understanding what went wrong and verifying the fix.
+1. Connect AirPods to your Mac
+2. Open the app and let it scan
+3. Choose the target pair if more than one is connected
+4. Check the diagnostic section
+5. Run speaker or microphone tests if needed
+6. Use **One-Click Repair** if the audio path is still broken
 
 ## Requirements
 
 - macOS 13 (Ventura) or later
-- [blueutil](https://github.com/toy/blueutil) - for Bluetooth control (`brew install blueutil`)
-- AirPods (any generation) or AirPods Pro
-
-## Build
-
-```bash
-git clone https://github.com/joewongjc/airpods-test-and-repair.git
-cd airpods-test-and-repair
-./build.sh
-```
-
-No Xcode required - just the Swift toolchain that comes with Xcode Command Line Tools.
-
-## Install
-
-After building, move the app to your preferred location:
-
-```bash
-# User Applications
-cp -r "AirPods Fix.app" ~/Applications/
-
-# Or system-wide (requires admin)
-sudo cp -r "AirPods Fix.app" /Applications/
-```
-
-Or simply double-click the `.app` to run without installing.
-
-## Usage
-
-1. Connect your AirPods to your Mac
-2. Open the app - it auto-scans for connected AirPods
-3. Check the diagnostic panel for any issues (red indicators)
-4. Use **Speaker Test** to verify audio output
-5. Use **Microphone Test** to verify mic input
-6. If something's wrong, hit **Restart Audio Service** to fix it
-
-### When to use each repair level
-
-| Symptom | Recommended Fix |
-|---|---|
-| Connected but no sound | Soft Fix (audio route refresh) |
-| Sound cuts in and out | Medium Fix (restart coreaudiod) |
-| One earbud not working | Hard Fix (Bluetooth reconnect) |
-| Stuck in mono/call mode | Medium Fix, then check if a call app is active |
-| Mic not picking up sound | Hard Fix (reconnect rebuilds audio channels) |
-
-## How It Works
-
-The app is a single-file SwiftUI application (~1200 lines) that uses:
-
-- **CoreAudio API** for direct audio device switching (faster and more reliable than AppleScript)
-- **AVFoundation** for real-time microphone level monitoring
-- **system_profiler** to read Bluetooth device info and battery levels
-- **blueutil** for programmatic Bluetooth disconnect/reconnect
-- **osascript** for volume and mute control
-
-Unicode normalization handles macOS smart quotes in device names (e.g., AirPods Pro with curly quotes) to avoid matching failures.
-
-## Permissions
-
-The app requests **Microphone access** for the mic test feature. This is optional - all other features work without it.
+- AirPods or AirPods Pro
 
 ## License
 

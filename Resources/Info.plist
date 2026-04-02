@@ -11,9 +11,9 @@
 	<key>CFBundleDisplayName</key>
 	<string>AirPods Fix</string>
 	<key>CFBundleVersion</key>
-	<string>1.0</string>
+    <string>1.0.0</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+    <string>1.0.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>
@@ -21,6 +21,6 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AirPods Fix 需要麦克风权限来测试 AirPods 麦克风是否正常工作</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 </dict>
 </plist>

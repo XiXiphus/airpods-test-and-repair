@@ -7,7 +7,7 @@ extension DiagnosticEngine {
     func playTestSound() {
         isPlayingTest = true
         log(lt(en: "Playing test sound...", zh: "播放测试音...", ja: "テスト音を再生しています..."))
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             if let sound = NSSound(named: "Ping") {
                 sound.play()
                 Thread.sleep(forTimeInterval: 1.0)
@@ -16,7 +16,8 @@ extension DiagnosticEngine {
                 sound.play()
                 Thread.sleep(forTimeInterval: 1.0)
             }
-            log(lt(en: "Test sound finished", zh: "测试音播放完毕", ja: "テスト音の再生が完了しました"))
+            guard let self = self else { return }
+            self.log(self.lt(en: "Test sound finished", zh: "测试音播放完毕", ja: "テスト音の再生が完了しました"))
             DispatchQueue.main.async { self.isPlayingTest = false }
         }
     }
@@ -73,8 +74,8 @@ extension DiagnosticEngine {
                 silentFrames += 1
                 if silentFrames > 30 && self.micRetryCount < 2 {
                     silentFrames = 0
-                    self.micRetryCount += 1
                     DispatchQueue.main.async {
+                        self.micRetryCount += 1
                         self.log(
                             self.lt(
                                 en: "Silence detected. Restarting microphone engine (attempt \(self.micRetryCount))...",

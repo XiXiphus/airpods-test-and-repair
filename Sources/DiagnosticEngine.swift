@@ -25,6 +25,7 @@ class DiagnosticEngine: ObservableObject {
     @Published var fixDone: Bool = false
 
     @Published var isPlayingTest = false
+    var fixGeneration = 0
 
     @Published var micLevel: Float = 0
     @Published var micPeak: Float = 0
@@ -37,8 +38,24 @@ class DiagnosticEngine: ObservableObject {
         let isError: Bool
     }
 
-    private var hasLoggedMissingBlueutil = false
+    private static func logTimestamp(from date: Date = Date()) -> String {
+        let components = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute, .second], from: date)
+        return String(
+            format: "%02d:%02d:%02d",
+            components.hour ?? 0,
+            components.minute ?? 0,
+            components.second ?? 0
+        )
+    }
+
+    private let serialQueue = DispatchQueue(label: "com.airpodsfix.engine-state")
+    private var _hasLoggedMissingBlueutil = false
+    private var hasLoggedMissingBlueutil: Bool {
+        get { serialQueue.sync { _hasLoggedMissingBlueutil } }
+        set { serialQueue.sync { _hasLoggedMissingBlueutil = newValue } }
+    }
     private var audioDeviceChangeObserverInstalled = false
+    private var audioDeviceChangeListenerBlock: AudioObjectPropertyListenerBlock?
     private var activationObserver: Any?
     private var lastAutoScanTime: Date = .distantPast
 
@@ -73,6 +90,10 @@ class DiagnosticEngine: ObservableObject {
     private func installAudioDeviceChangeListener() {
         guard !audioDeviceChangeObserverInstalled else { return }
         audioDeviceChangeObserverInstalled = true
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.autoScanIfNeeded()
+        }
+        audioDeviceChangeListenerBlock = block
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -81,22 +102,40 @@ class DiagnosticEngine: ObservableObject {
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
-            DispatchQueue.main
-        ) { [weak self] _, _ in
-            self?.autoScanIfNeeded()
-        }
+            DispatchQueue.main,
+            block
+        )
+    }
+
+    private func removeAudioDeviceChangeListener() {
+        guard let block = audioDeviceChangeListenerBlock else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        audioDeviceChangeListenerBlock = nil
     }
 
     deinit {
         if let observer = activationObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        removeAudioDeviceChangeListener()
     }
 
     func log(_ msg: String, isError: Bool = false) {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm:ss"
-        let entry = LogEntry(time: fmt.string(from: Date()), message: msg, isError: isError)
+        let entry = LogEntry(
+            time: Self.logTimestamp(),
+            message: msg,
+            isError: isError
+        )
         DispatchQueue.main.async { self.logs.append(entry) }
     }
 
@@ -203,12 +242,13 @@ class DiagnosticEngine: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let previousDeviceID = device?.id
             let btPower = runBlueutil(["--power"])
-            let btSysProf = runShell("system_profiler SPBluetoothDataType | head -5")
             if btPower.status == 127 {
                 noteMissingBlueutilIfNeeded()
             }
-            let hasBTOn = btPower.succeeded && btPower.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
-                || btSysProf.output.contains("State: On")
+
+            let btInfoResult = runShell("system_profiler SPBluetoothDataType")
+            let hasBTOn = (btPower.succeeded && btPower.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
+                || btInfoResult.output.contains("State: On")
             log(
                 lt(
                     en: "Bluetooth: \(hasBTOn ? "On" : "Off")",
@@ -223,7 +263,6 @@ class DiagnosticEngine: ObservableObject {
                 return
             }
 
-            let btInfoResult = runShell("system_profiler SPBluetoothDataType")
             guard btInfoResult.succeeded else {
                 log(
                     lt(
@@ -245,51 +284,61 @@ class DiagnosticEngine: ObservableObject {
             }
 
             var bestCandidateByOutputID: [AudioDeviceID: BluetoothScanCandidate] = [:]
+            var unmatchedHeadphones: [AirPodsDevice] = []
             for block in bluetoothDeviceBlocks(from: btInfoResult.output) {
                 var battL = "-", battR = "-", battC = "-", mac = ""
+                var hasRSSI = false
                 for line in block.lines {
                     if line.starts(with: "Left Battery Level:") { battL = line.components(separatedBy: ": ").last ?? "-" }
                     if line.starts(with: "Right Battery Level:") { battR = line.components(separatedBy: ": ").last ?? "-" }
                     if line.starts(with: "Case Battery Level:") { battC = line.components(separatedBy: ": ").last ?? "-" }
                     if line.starts(with: "Address:") { mac = line.components(separatedBy: ": ").last ?? "" }
+                    if line.starts(with: "RSSI:") { hasRSSI = true }
                 }
 
-                guard battL != "-" || battR != "-" else { continue }
-                guard let bestMatch = bestMatchingAudioOutput(
+                let hasBattery = battL != "-" || battR != "-"
+                guard hasBattery else { continue }
+
+                let airPodsDevice = AirPodsDevice(
+                    name: block.name,
+                    batteryLeft: battL,
+                    batteryRight: battR,
+                    batteryCase: battC,
+                    macAddress: mac
+                )
+
+                if let bestMatch = bestMatchingAudioOutput(
                     forBluetoothName: block.name,
                     macAddress: mac,
                     among: audioOutputs
-                ) else { continue }
+                ) {
+                    let candidate = BluetoothScanCandidate(
+                        device: airPodsDevice,
+                        matchedOutput: bestMatch.device,
+                        score: bestMatch.score
+                    )
 
-                let candidate = BluetoothScanCandidate(
-                    device: AirPodsDevice(
-                        name: block.name,
-                        batteryLeft: battL,
-                        batteryRight: battR,
-                        batteryCase: battC,
-                        macAddress: mac
-                    ),
-                    matchedOutput: bestMatch.device,
-                    score: bestMatch.score
-                )
-
-                if let existing = bestCandidateByOutputID[candidate.matchedOutput.id] {
-                    if candidate.score > existing.score {
+                    if let existing = bestCandidateByOutputID[candidate.matchedOutput.id] {
+                        if candidate.score > existing.score {
+                            bestCandidateByOutputID[candidate.matchedOutput.id] = candidate
+                        }
+                    } else {
                         bestCandidateByOutputID[candidate.matchedOutput.id] = candidate
                     }
-                } else {
-                    bestCandidateByOutputID[candidate.matchedOutput.id] = candidate
+                } else if hasRSSI {
+                    unmatchedHeadphones.append(airPodsDevice)
                 }
             }
 
-            let devices = bestCandidateByOutputID.values
+            let matchedDevices = bestCandidateByOutputID.values.map(\.device)
+            let allCandidates = matchedDevices + unmatchedHeadphones
+            let devices = allCandidates
                 .sorted { lhs, rhs in
-                    if lhs.device.name != rhs.device.name {
-                        return lhs.device.name.localizedStandardCompare(rhs.device.name) == .orderedAscending
+                    if lhs.name != rhs.name {
+                        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
                     }
-                    return lhs.device.id < rhs.device.id
+                    return lhs.id < rhs.id
                 }
-                .map(\.device)
 
             let selectedDevice = devices.first(where: { $0.id == previousDeviceID }) ?? devices.first
             DispatchQueue.main.async {
@@ -351,6 +400,7 @@ class DiagnosticEngine: ObservableObject {
 
         switch matchAudioOutputDevice(for: device) {
         case .matched(let audioOutput):
+            diag.isAudioOutputAvailable = true
             if let channels = outputChannelCount(for: audioOutput.id) {
                 diag.outputChannels = "\(channels)"
             }
@@ -359,6 +409,7 @@ class DiagnosticEngine: ObservableObject {
             }
             diag.isDefaultOutput = defaultOutputDeviceID() == audioOutput.id
         case .ambiguous:
+            diag.isAudioOutputAvailable = true
             log(
                 lt(
                     en: "Multiple audio outputs match \(selectedDeviceLabel(for: device)). Select the target in System Settings first.",
@@ -368,11 +419,12 @@ class DiagnosticEngine: ObservableObject {
                 isError: true
             )
         case .notFound:
+            diag.isAudioOutputAvailable = false
             log(
                 lt(
-                    en: "Could not find \(selectedDeviceLabel(for: device)) in the audio output list",
-                    zh: "未在音频输出列表中找到 \(selectedDeviceLabel(for: device))",
-                    ja: "音声出力一覧に \(selectedDeviceLabel(for: device)) が見つかりません"
+                    en: "\(selectedDeviceLabel(for: device)) is not active on this Mac. Use \"Connect to this Mac\" to claim it.",
+                    zh: "\(selectedDeviceLabel(for: device)) 未在本机激活音频输出，可尝试「连接到本机」",
+                    ja: "\(selectedDeviceLabel(for: device)) はこの Mac で有効ではありません。「この Mac に接続」で接続してください。"
                 ),
                 isError: true
             )

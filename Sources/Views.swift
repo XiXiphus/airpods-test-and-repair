@@ -10,6 +10,15 @@ extension View {
             self
         }
     }
+
+    @ViewBuilder
+    func onLogCountChange(_ value: Int, perform action: @escaping () -> Void) -> some View {
+        if #available(macOS 14, *) {
+            self.onChange(of: value) { action() }
+        } else {
+            self.onChange(of: value) { _ in action() }
+        }
+    }
 }
 
 enum DS {

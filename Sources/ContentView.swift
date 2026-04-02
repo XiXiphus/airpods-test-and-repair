@@ -17,12 +17,19 @@ struct ContentView: View {
             headerSection
             if let dev = engine.device {
                 deviceSection(dev)
-                diagnosisSection(dev)
-                audioTestSection
-                if engine.isFixing || engine.fixDone {
-                    fixProgressSection
+                if engine.diagnosis.isAudioOutputAvailable {
+                    diagnosisSection(dev)
+                    audioTestSection
+                    if engine.isFixing || engine.fixDone {
+                        fixProgressSection
+                    }
+                    actionsSection
+                } else {
+                    notConnectedSection(dev)
+                    if engine.isFixing || engine.fixDone {
+                        fixProgressSection
+                    }
                 }
-                actionsSection
             } else if !engine.isScanning {
                 emptySection
             }
@@ -150,8 +157,12 @@ struct ContentView: View {
             }
 
             HStack(spacing: 20) {
-                BatteryRing(label: t(en: "Left", zh: "左耳", ja: "左"), percent: Int(dev.batteryLeft.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
-                BatteryRing(label: t(en: "Right", zh: "右耳", ja: "右"), percent: Int(dev.batteryRight.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
+                if dev.batteryLeft != "-", let pct = Int(dev.batteryLeft.replacingOccurrences(of: "%", with: "")) {
+                    BatteryRing(label: t(en: "Left", zh: "左耳", ja: "左"), percent: pct, icon: "ear")
+                }
+                if dev.batteryRight != "-", let pct = Int(dev.batteryRight.replacingOccurrences(of: "%", with: "")) {
+                    BatteryRing(label: t(en: "Right", zh: "右耳", ja: "右"), percent: pct, icon: "ear")
+                }
                 if dev.batteryCase != "-", let pct = Int(dev.batteryCase.replacingOccurrences(of: "%", with: "")) {
                     BatteryRing(label: t(en: "Case", zh: "充电盒", ja: "ケース"), percent: pct, icon: "case")
                 }
@@ -422,6 +433,47 @@ struct ContentView: View {
         }
     }
 
+    func notConnectedSection(_ dev: AirPodsDevice) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 14))
+                    .foregroundColor(.orange)
+                Text(t(en: "Not connected to this Mac", zh: "未连接到本机", ja: "この Mac に未接続"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+
+            Text(t(
+                en: "This headset is nearby but its audio is not routed to this Mac. Connect it to start using or repairing.",
+                zh: "检测到耳机在附近，但音频未路由到本机。连接后即可使用或修复。",
+                ja: "ヘッドセットは近くにありますが、音声はこの Mac にルーティングされていません。接続して使用または修復してください。"
+            ))
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            ActionButton(
+                title: engine.isFixing
+                    ? t(en: "Connecting...", zh: "连接中...", ja: "接続中...")
+                    : t(en: "Connect to this Mac", zh: "连接到本机", ja: "この Mac に接続"),
+                subtitle: t(en: "Claim audio from other devices via Bluetooth", zh: "通过蓝牙从其他设备抢占音频", ja: "Bluetooth で他のデバイスから音声を取得"),
+                icon: "link.circle",
+                style: .primary,
+                action: { engine.connectToThisMac() }
+            )
+            .disabled(engine.isScanning || engine.isFixing)
+        }
+        .padding(DS.cardPadding)
+        .background(DS.cardBg)
+        .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.cardRadius)
+                .stroke(DS.subtleBorder, lineWidth: 1)
+        )
+    }
+
     var emptySection: some View {
         VStack(spacing: 14) {
             Image(systemName: "airpodspro")
@@ -490,7 +542,7 @@ struct ContentView: View {
                     .frame(maxHeight: 120)
                     .background(Color.black.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onChange(of: engine.logs.count) {
+                    .onLogCountChange(engine.logs.count) {
                         if let last = engine.logs.last {
                             withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                         }

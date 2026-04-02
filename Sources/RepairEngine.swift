@@ -18,6 +18,7 @@ extension DiagnosticEngine {
     }
 
     func beginFix() {
+        fixGeneration += 1
         isFixing = true
         fixDone = false
         fixProgress = 0
@@ -25,12 +26,14 @@ extension DiagnosticEngine {
     }
 
     func endFix() {
+        let savedGeneration = fixGeneration
         DispatchQueue.main.async {
             withAnimation {
                 self.fixProgress = 1.0
                 self.fixDone = true
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard self.fixGeneration == savedGeneration else { return }
                 withAnimation {
                     self.isFixing = false
                     self.fixDone = false
@@ -484,6 +487,87 @@ extension DiagnosticEngine {
             }
 
             step(lt(en: "Audio service restarted", zh: "音频服务已重启", ja: "音声サービスを再起動しました"), progress: 1.0)
+            endFix()
+        }
+    }
+
+    func connectToThisMac() {
+        guard ensureBlueutilAvailable(for: lt(en: "Connect to this Mac", zh: "连接到本机", ja: "この Mac に接続")) else { return }
+        guard let dev = device else {
+            log(lt(en: "No target device", zh: "未选择目标设备", ja: "対象デバイスがありません"), isError: true); return
+        }
+        guard let safeMac = sanitizedBluetoothAddress(for: dev) else {
+            log(lt(en: "Bluetooth address is invalid or missing", zh: "蓝牙地址无效或缺失", ja: "Bluetooth アドレスが無効か不足しています"), isError: true); return
+        }
+        beginFix()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let originalOutputState = currentOutputSafetyState()
+            defer {
+                if let state = originalOutputState {
+                    restoreOutputSafetyState(state)
+                }
+            }
+
+            step(lt(en: "Requesting Bluetooth connection...", zh: "请求蓝牙连接...", ja: "Bluetooth 接続を要求しています..."), progress: 0.1)
+            reinforceQuietOutputProtection()
+            let connectResult = runBlueutil(["--connect", safeMac])
+            guard connectResult.succeeded else {
+                let isPermissionError = connectResult.output.contains("absence of access") || connectResult.status == 134
+                if isPermissionError {
+                    log(
+                        lt(
+                            en: "Bluetooth access denied. Grant permission in System Settings → Privacy & Security → Bluetooth for AirPods Fix, then retry.",
+                            zh: "蓝牙权限被拒绝，请在「系统设置 → 隐私与安全性 → 蓝牙」中允许 AirPods Fix，然后重试",
+                            ja: "Bluetooth アクセスが拒否されました。「システム設定 → プライバシーとセキュリティ → Bluetooth」で許可してください。"
+                        ),
+                        isError: true
+                    )
+                } else {
+                    log(
+                        lt(
+                            en: "Failed to connect\(commandFailureSuffix(connectResult))",
+                            zh: "连接失败\(commandFailureSuffix(connectResult))",
+                            ja: "接続に失敗しました\(commandFailureSuffix(connectResult))"
+                        ),
+                        isError: true
+                    )
+                }
+                step(lt(en: "Connection failed", zh: "连接失败", ja: "接続に失敗しました"), progress: 1.0)
+                endFix()
+                return
+            }
+
+            step(lt(en: "Waiting for Bluetooth handshake...", zh: "等待蓝牙握手...", ja: "Bluetooth ハンドシェイクを待っています..."), progress: 0.3)
+            Thread.sleep(forTimeInterval: 2.0)
+            step(lt(en: "Establishing audio path...", zh: "建立音频通道...", ja: "音声経路を確立しています..."), progress: 0.5)
+            Thread.sleep(forTimeInterval: 2.0)
+
+            step(lt(en: "Switching audio output...", zh: "切换音频输出...", ja: "音声出力を切り替えています..."), progress: 0.7)
+            _ = switchToSelectedAirPodsOutput(dev)
+            Thread.sleep(forTimeInterval: 1.0)
+
+            if let state = originalOutputState {
+                step(lt(en: "Restoring volume...", zh: "恢复音量...", ja: "音量を復元しています..."), progress: 0.85)
+                restoreOutputSafetyState(state)
+            }
+
+            step(lt(en: "Verifying connection...", zh: "验证连接...", ja: "接続を確認しています..."), progress: 0.9)
+            let finalDiag = self.diagnoseAudio(for: dev)
+
+            if finalDiag.isDefaultOutput {
+                step(lt(en: "Connected successfully", zh: "连接成功", ja: "接続に成功しました"), progress: 1.0)
+            } else if finalDiag.isAudioOutputAvailable {
+                step(
+                    lt(
+                        en: "Connected, but macOS did not switch the output automatically. Select the headset in Sound settings, then retry repair if needed.",
+                        zh: "已连接，但 macOS 没有自动切换输出。请先在声音设置中选中耳机，必要时再重试修复。",
+                        ja: "接続されましたが、macOS が出力を自動で切り替えませんでした。サウンド設定でヘッドセットを選択してから、必要なら再度修復してください。"
+                    ),
+                    progress: 1.0
+                )
+            } else {
+                step(lt(en: "Connection requested, but the audio output hasn't appeared yet. Try scanning again in a few seconds.", zh: "已请求连接，但音频输出尚未出现，稍后重新扫描试试", ja: "接続を要求しましたが、音声出力がまだ現れません。数秒後にもう一度スキャンしてください。"), progress: 1.0)
+            }
             endFix()
         }
     }

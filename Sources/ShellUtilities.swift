@@ -15,7 +15,6 @@ func normalizeAudioDeviceName(_ value: String) -> String {
 
 func normalizeHardwareIdentifier(_ value: String) -> String {
     normalizeAudioDeviceName(value)
-        .replacingOccurrences(of: ":", with: "")
         .replacingOccurrences(of: "-", with: "")
         .replacingOccurrences(of: " ", with: "")
 }
@@ -128,11 +127,11 @@ func runProcess(
     }
     do {
         try process.run()
-        process.waitUntilExit()
     } catch {
         return ShellCommandResult(output: error.localizedDescription, status: -1)
     }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
     let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return ShellCommandResult(output: output, status: process.terminationStatus)
 }

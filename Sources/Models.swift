@@ -69,6 +69,7 @@ struct AirPodsDevice: Identifiable, Hashable {
 
 struct AudioDiagnosis {
     var isDefaultOutput = false
+    var isAudioOutputAvailable = false
     var outputChannels = "?"
     var sampleRate = "?"
     var volume = "?"
@@ -88,10 +89,13 @@ struct AudioDiagnosis {
     }
 
     var hasIssue: Bool {
-        !isDefaultOutput || isMuted || isLowVolume || isReducedQualityMode
+        !isAudioOutputAvailable || !isDefaultOutput || isMuted || isLowVolume || isReducedQualityMode
     }
 
     func modeLabel(in language: AppLanguage) -> String {
+        guard isAudioOutputAvailable else {
+            return localized(language, en: "Not connected", zh: "未连接到本机", ja: "未接続")
+        }
         guard let ch = channelCount, let sr = sampleRateHz else {
             return localized(language, en: "Unknown", zh: "未知", ja: "不明")
         }

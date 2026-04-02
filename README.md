@@ -10,7 +10,7 @@ The app is still branded around AirPods, but the underlying audio diagnosis and 
 
 ## End Users
 
-If you just want to use the app, download the packaged build from GitHub Releases.
+If you just want to use the app, download the packaged build from [GitHub Releases](https://github.com/XiXiphus/airpods-test-and-repair/releases).
 
 1. Download the latest `.dmg`
 2. Open the disk image
@@ -39,7 +39,7 @@ Common commands:
 
 - `./build.sh` builds `AirPods Fix.app`
 - `./package-release.sh` builds the app and creates a release `.dmg`
-- Pushing a `v*` tag triggers GitHub Actions to build and publish a release artifact
+- Pushing a `v*` tag triggers [GitHub Actions](https://github.com/XiXiphus/airpods-test-and-repair/actions) to build and publish a release artifact
 
 More packaging and release notes are in [RUNTIME.md](RUNTIME.md).
 
@@ -86,4 +86,4 @@ The app asks for microphone permission only when you run the microphone test.
 
 ## License
 
-MIT
+[MIT](LICENSE)

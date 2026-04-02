@@ -10,7 +10,7 @@
 
 ## 普通用户
 
-如果你只是想使用这个工具，直接下载 GitHub Releases 里的打包版。
+如果你只是想使用这个工具，直接下载 [GitHub Releases](https://github.com/XiXiphus/airpods-test-and-repair/releases) 里的打包版。
 
 1. 下载最新 `.dmg`
 2. 打开磁盘镜像
@@ -39,7 +39,7 @@
 
 - `./build.sh` 生成 `AirPods Fix.app`
 - `./package-release.sh` 生成发布用 `.dmg`
-- push `v*` tag 后，GitHub Actions 会自动构建并发布 release 产物
+- push `v*` tag 后，[GitHub Actions](https://github.com/XiXiphus/airpods-test-and-repair/actions) 会自动构建并发布 release 产物
 
 更详细的打包和发布说明见 [RUNTIME.md](RUNTIME.md)。
 
@@ -86,4 +86,4 @@ Release 构建应当把 `blueutil` 一起打进 app。
 
 ## 许可证
 
-MIT
+[MIT](LICENSE)

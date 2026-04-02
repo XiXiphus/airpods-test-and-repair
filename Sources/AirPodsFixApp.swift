@@ -388,8 +388,20 @@ func nominalSampleRate(for deviceID: AudioDeviceID) -> Int? {
 }
 
 func audioOutputMatchScore(for candidate: AudioOutputDevice, target: AirPodsDevice) -> Int {
-    let normalizedTargetName = normalizeAudioDeviceName(target.name)
-    let normalizedTargetMAC = normalizeHardwareIdentifier(target.macAddress)
+    audioOutputMatchScore(
+        for: candidate,
+        targetName: target.name,
+        targetMACAddress: target.macAddress
+    )
+}
+
+func audioOutputMatchScore(
+    for candidate: AudioOutputDevice,
+    targetName: String,
+    targetMACAddress: String
+) -> Int {
+    let normalizedTargetName = normalizeAudioDeviceName(targetName)
+    let normalizedTargetMAC = normalizeHardwareIdentifier(targetMACAddress)
     let candidateName = normalizeAudioDeviceName(candidate.name)
     let candidateUID = normalizeHardwareIdentifier(candidate.uid)
     let candidateModelUID = normalizeHardwareIdentifier(candidate.modelUID)
@@ -415,6 +427,27 @@ func audioOutputMatchScore(for candidate: AudioOutputDevice, target: AirPodsDevi
     if hasExactNameMatch { score += 80 }
     if hasMACMatch { score += 200 }
     return score
+}
+
+func bestMatchingAudioOutput(
+    forBluetoothName name: String,
+    macAddress: String,
+    among outputs: [AudioOutputDevice]
+) -> (device: AudioOutputDevice, score: Int)? {
+    outputs
+        .compactMap { candidate -> (AudioOutputDevice, Int)? in
+            let score = audioOutputMatchScore(
+                for: candidate,
+                targetName: name,
+                targetMACAddress: macAddress
+            )
+            return score > 0 ? (candidate, score) : nil
+        }
+        .sorted { lhs, rhs in
+            if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+            return lhs.0.isBluetoothTransport && !rhs.0.isBluetoothTransport
+        }
+        .first
 }
 
 func matchAudioOutputDevice(for device: AirPodsDevice) -> AudioOutputMatch {
@@ -620,7 +653,15 @@ class DiagnosticEngine: ObservableObject {
                 return
             }
 
-            let devices = bluetoothDeviceBlocks(from: btInfoResult.output).compactMap { block -> AirPodsDevice? in
+            let audioOutputs = listAudioOutputDevices()
+            struct BluetoothScanCandidate {
+                let device: AirPodsDevice
+                let matchedOutput: AudioOutputDevice
+                let score: Int
+            }
+
+            var bestCandidateByOutputID: [AudioDeviceID: BluetoothScanCandidate] = [:]
+            for block in bluetoothDeviceBlocks(from: btInfoResult.output) {
                 var battL = "-", battR = "-", battC = "-", mac = ""
                 for line in block.lines {
                     if line.starts(with: "Left Battery Level:") { battL = line.components(separatedBy: ": ").last ?? "-" }
@@ -629,15 +670,42 @@ class DiagnosticEngine: ObservableObject {
                     if line.starts(with: "Address:") { mac = line.components(separatedBy: ": ").last ?? "" }
                 }
 
-                guard battL != "-" || battR != "-" else { return nil }
-                return AirPodsDevice(
-                    name: block.name,
-                    batteryLeft: battL,
-                    batteryRight: battR,
-                    batteryCase: battC,
-                    macAddress: mac
+                guard battL != "-" || battR != "-" else { continue }
+                guard let bestMatch = bestMatchingAudioOutput(
+                    forBluetoothName: block.name,
+                    macAddress: mac,
+                    among: audioOutputs
+                ) else { continue }
+
+                let candidate = BluetoothScanCandidate(
+                    device: AirPodsDevice(
+                        name: block.name,
+                        batteryLeft: battL,
+                        batteryRight: battR,
+                        batteryCase: battC,
+                        macAddress: mac
+                    ),
+                    matchedOutput: bestMatch.device,
+                    score: bestMatch.score
                 )
+
+                if let existing = bestCandidateByOutputID[candidate.matchedOutput.id] {
+                    if candidate.score > existing.score {
+                        bestCandidateByOutputID[candidate.matchedOutput.id] = candidate
+                    }
+                } else {
+                    bestCandidateByOutputID[candidate.matchedOutput.id] = candidate
+                }
             }
+
+            let devices = bestCandidateByOutputID.values
+                .sorted { lhs, rhs in
+                    if lhs.device.name != rhs.device.name {
+                        return lhs.device.name.localizedStandardCompare(rhs.device.name) == .orderedAscending
+                    }
+                    return lhs.device.id < rhs.device.id
+                }
+                .map(\.device)
 
             let selectedDevice = devices.first(where: { $0.id == previousDeviceID }) ?? devices.first
             DispatchQueue.main.async {

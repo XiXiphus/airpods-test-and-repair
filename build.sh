@@ -18,7 +18,12 @@ mkdir -p "$SCRIPT_DIR/$BUNDLE_DIR/Contents/Resources"
 mkdir -p "$SCRIPT_DIR/$BUNDLE_DIR/Contents/Resources/bin"
 mkdir -p "$MODULE_CACHE_DIR"
 
-# Compile Swift source
+# Compile Swift source (all Sources/*.swift)
+SWIFT_FILES=()
+while IFS= read -r -d '' f; do
+    SWIFT_FILES+=("$f")
+done < <(find "$SCRIPT_DIR/Sources" -name '*.swift' -print0)
+
 swiftc \
     -O \
     -whole-module-optimization \
@@ -28,7 +33,7 @@ swiftc \
     -framework AVFoundation \
     -framework CoreAudio \
     -o "$SCRIPT_DIR/$BUNDLE_DIR/Contents/MacOS/airpods-fix-gui" \
-    "$SCRIPT_DIR/Sources/AirPodsFixApp.swift"
+    "${SWIFT_FILES[@]}"
 
 # Create launcher script
 cat > "$SCRIPT_DIR/$BUNDLE_DIR/Contents/MacOS/airpods-fix" << 'LAUNCHER'

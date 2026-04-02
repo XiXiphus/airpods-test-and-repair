@@ -5,6 +5,38 @@ import CoreAudio
 
 // MARK: - 数据模型
 
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case english = "en"
+    case chinese = "zh-Hans"
+    case japanese = "ja"
+
+    var id: String { rawValue }
+
+    var menuLabel: String {
+        switch self {
+        case .english: return "English"
+        case .chinese: return "中文"
+        case .japanese: return "日本語"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .english: return "EN"
+        case .chinese: return "中文"
+        case .japanese: return "日本語"
+        }
+    }
+}
+
+func localized(_ language: AppLanguage, en: String, zh: String, ja: String) -> String {
+    switch language {
+    case .english: return en
+    case .chinese: return zh
+    case .japanese: return ja
+    }
+}
+
 struct AirPodsDevice: Identifiable, Hashable {
     let id: String
     let name: String
@@ -59,12 +91,40 @@ struct AudioDiagnosis {
         !isDefaultOutput || isMuted || isLowVolume || isReducedQualityMode
     }
 
-    var modeLabel: String {
-        guard let ch = channelCount, let sr = sampleRateHz else { return "未知" }
-        if ch >= 2 && sr >= 44100 { return "立体声 \(sr/1000)kHz" }
-        if ch == 1 && sr == 24000 { return "单声道 24kHz" }
-        if ch == 1 && (sr == 8000 || sr == 16000) { return "通话模式 \(sr/1000)kHz" }
-        return "\(ch == 1 ? "单声道" : "立体声") \(sr/1000)kHz"
+    func modeLabel(in language: AppLanguage) -> String {
+        guard let ch = channelCount, let sr = sampleRateHz else {
+            return localized(language, en: "Unknown", zh: "未知", ja: "不明")
+        }
+        if ch >= 2 && sr >= 44100 {
+            return localized(
+                language,
+                en: "Stereo \(sr/1000)kHz",
+                zh: "立体声 \(sr/1000)kHz",
+                ja: "ステレオ \(sr/1000)kHz"
+            )
+        }
+        if ch == 1 && sr == 24000 {
+            return localized(
+                language,
+                en: "Mono 24kHz",
+                zh: "单声道 24kHz",
+                ja: "モノラル 24kHz"
+            )
+        }
+        if ch == 1 && (sr == 8000 || sr == 16000) {
+            return localized(
+                language,
+                en: "Call mode \(sr/1000)kHz",
+                zh: "通话模式 \(sr/1000)kHz",
+                ja: "通話モード \(sr/1000)kHz"
+            )
+        }
+        return localized(
+            language,
+            en: "\(ch == 1 ? "Mono" : "Stereo") \(sr/1000)kHz",
+            zh: "\(ch == 1 ? "单声道" : "立体声") \(sr/1000)kHz",
+            ja: "\(ch == 1 ? "モノラル" : "ステレオ") \(sr/1000)kHz"
+        )
     }
 }
 
@@ -535,6 +595,8 @@ func fallbackAudioOutputDevice(excluding deviceName: String) -> AudioOutputDevic
 // MARK: - 诊断引擎
 
 class DiagnosticEngine: ObservableObject {
+    private static let languageDefaultsKey = "selectedLanguage"
+
     @Published var device: AirPodsDevice?
     @Published var diagnosis = AudioDiagnosis()
     @Published var logs: [LogEntry] = []
@@ -542,6 +604,9 @@ class DiagnosticEngine: ObservableObject {
     @Published var isFixing = false
     @Published var bluetoothOn = true
     @Published var allDevices: [AirPodsDevice] = []
+    @Published var language = AppLanguage(
+        rawValue: UserDefaults.standard.string(forKey: DiagnosticEngine.languageDefaultsKey) ?? ""
+    ) ?? .english
     private var hasLoggedMissingBlueutil = false
 
     struct LogEntry: Identifiable {
@@ -549,6 +614,11 @@ class DiagnosticEngine: ObservableObject {
         let time: String
         let message: String
         let isError: Bool
+    }
+
+    private struct OutputSafetyState {
+        var volume: Int
+        var isMuted: Bool
     }
 
     init() { scan() }
@@ -564,19 +634,48 @@ class DiagnosticEngine: ObservableObject {
         allDevices.count > 1 ? device.pickerLabel : device.name
     }
 
+    private func lt(en: String, zh: String, ja: String) -> String {
+        localized(language, en: en, zh: zh, ja: ja)
+    }
+
+    func setLanguage(_ language: AppLanguage) {
+        guard self.language != language else { return }
+        UserDefaults.standard.set(language.rawValue, forKey: DiagnosticEngine.languageDefaultsKey)
+        DispatchQueue.main.async {
+            self.language = language
+        }
+    }
+
     private func blueutilGuidance() -> String {
-        "未找到 blueutil；请使用预编译发布版，或先安装 blueutil（brew install blueutil）"
+        lt(
+            en: "blueutil not found; use the prebuilt release, or install blueutil first (`brew install blueutil`)",
+            zh: "未找到 blueutil；请使用预编译发布版，或先安装 blueutil（brew install blueutil）",
+            ja: "blueutil が見つかりません。配布版を使うか、先に blueutil をインストールしてください（`brew install blueutil`）"
+        )
     }
 
     private func noteMissingBlueutilIfNeeded() {
         guard !hasLoggedMissingBlueutil else { return }
         hasLoggedMissingBlueutil = true
-        log("蓝牙重连功能受限，\(blueutilGuidance())")
+        log(
+            lt(
+                en: "Bluetooth reconnect is limited. \(blueutilGuidance())",
+                zh: "蓝牙重连功能受限，\(blueutilGuidance())",
+                ja: "Bluetooth 再接続は制限されています。\(blueutilGuidance())"
+            )
+        )
     }
 
     private func ensureBlueutilAvailable(for feature: String) -> Bool {
         guard resolvedToolURL(named: "blueutil") != nil else {
-            log("\(feature) 需要 blueutil，\(blueutilGuidance())", isError: true)
+            log(
+                lt(
+                    en: "\(feature) requires blueutil. \(blueutilGuidance())",
+                    zh: "\(feature) 需要 blueutil，\(blueutilGuidance())",
+                    ja: "\(feature) には blueutil が必要です。\(blueutilGuidance())"
+                ),
+                isError: true
+            )
             return false
         }
         return true
@@ -584,8 +683,20 @@ class DiagnosticEngine: ObservableObject {
 
     private func commandFailureSuffix(_ result: ShellCommandResult) -> String {
         let trimmedOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedOutput.isEmpty else { return "（退出码 \(result.status)）" }
-        return "：\(trimmedOutput)"
+        guard !trimmedOutput.isEmpty else {
+            return localized(
+                language,
+                en: " (exit code \(result.status))",
+                zh: "（退出码 \(result.status)）",
+                ja: "（終了コード \(result.status)）"
+            )
+        }
+        return localized(
+            language,
+            en: ": \(trimmedOutput)",
+            zh: "：\(trimmedOutput)",
+            ja: "：\(trimmedOutput)"
+        )
     }
 
     @discardableResult
@@ -596,6 +707,110 @@ class DiagnosticEngine: ObservableObject {
             return false
         }
         return true
+    }
+
+    private func currentOutputSafetyState() -> OutputSafetyState? {
+        let volumeResult = runShell("osascript -e 'output volume of (get volume settings)'")
+        guard volumeResult.succeeded else {
+            log(
+                lt(
+                    en: "Failed to read system volume\(commandFailureSuffix(volumeResult))",
+                    zh: "读取系统音量失败\(commandFailureSuffix(volumeResult))",
+                    ja: "システム音量の読み取りに失敗しました\(commandFailureSuffix(volumeResult))"
+                ),
+                isError: true
+            )
+            return nil
+        }
+
+        let mutedResult = runShell("osascript -e 'output muted of (get volume settings)'")
+        guard mutedResult.succeeded else {
+            log(
+                lt(
+                    en: "Failed to read mute state\(commandFailureSuffix(mutedResult))",
+                    zh: "读取静音状态失败\(commandFailureSuffix(mutedResult))",
+                    ja: "ミュート状態の読み取りに失敗しました\(commandFailureSuffix(mutedResult))"
+                ),
+                isError: true
+            )
+            return nil
+        }
+
+        guard let volume = Int(volumeResult.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            log(
+                lt(
+                    en: "Could not parse the current system volume: \(volumeResult.output)",
+                    zh: "无法解析当前系统音量：\(volumeResult.output)",
+                    ja: "現在のシステム音量を解析できませんでした: \(volumeResult.output)"
+                ),
+                isError: true
+            )
+            return nil
+        }
+
+        return OutputSafetyState(
+            volume: min(max(volume, 0), 100),
+            isMuted: mutedResult.output == "true"
+        )
+    }
+
+    @discardableResult
+    private func setSystemOutputMuted(_ muted: Bool, failureMessage: String) -> Bool {
+        let command = muted
+            ? "osascript -e 'set volume with output muted'"
+            : "osascript -e 'set volume without output muted'"
+        return runCommand(command, failureMessage: failureMessage)
+    }
+
+    @discardableResult
+    private func setSystemOutputVolume(_ volume: Int, failureMessage: String) -> Bool {
+        let clampedVolume = min(max(volume, 0), 100)
+        return runCommand(
+            "osascript -e 'set volume output volume \(clampedVolume)'",
+            failureMessage: failureMessage
+        )
+    }
+
+    private func reinforceQuietOutputProtection() {
+        _ = setSystemOutputMuted(
+            true,
+            failureMessage: lt(
+                en: "Failed to enable protective mute",
+                zh: "进入保护静音失败",
+                ja: "保護ミュートの有効化に失敗しました"
+            )
+        )
+    }
+
+    private func applyCorrectiveOutputAdjustments(
+        to state: inout OutputSafetyState,
+        basedOn diagnosis: AudioDiagnosis
+    ) {
+        if diagnosis.isMuted {
+            state.isMuted = false
+        }
+        if let volume = diagnosis.volumePercent, volume < 10 {
+            state.volume = max(state.volume, 50)
+        }
+    }
+
+    private func restoreOutputSafetyState(_ state: OutputSafetyState) {
+        _ = setSystemOutputVolume(
+            state.volume,
+            failureMessage: lt(
+                en: "Failed to restore system volume",
+                zh: "恢复系统音量失败",
+                ja: "システム音量の復元に失敗しました"
+            )
+        )
+        _ = setSystemOutputMuted(
+            state.isMuted,
+            failureMessage: lt(
+                en: "Failed to restore mute state",
+                zh: "恢复静音状态失败",
+                ja: "ミュート状態の復元に失敗しました"
+            )
+        )
     }
 
     private func restartCoreAudioService() -> Bool {
@@ -610,7 +825,14 @@ class DiagnosticEngine: ObservableObject {
         }
 
         let preferredFailure = nonInteractiveSudo.output.isEmpty ? directKill : nonInteractiveSudo
-        log("无法重启音频服务\(commandFailureSuffix(preferredFailure))", isError: true)
+        log(
+            lt(
+                en: "Failed to restart the audio service\(commandFailureSuffix(preferredFailure))",
+                zh: "无法重启音频服务\(commandFailureSuffix(preferredFailure))",
+                ja: "音声サービスを再起動できませんでした\(commandFailureSuffix(preferredFailure))"
+            ),
+            isError: true
+        )
         return false
     }
 
@@ -618,7 +840,13 @@ class DiagnosticEngine: ObservableObject {
         guard let selected = allDevices.first(where: { $0.id == id }) else { return }
         guard device?.id != selected.id else { return }
         DispatchQueue.main.async { self.device = selected }
-        log("切换目标设备: \(selectedDeviceLabel(for: selected))")
+        log(
+            lt(
+                en: "Switched target device: \(selectedDeviceLabel(for: selected))",
+                zh: "切换目标设备: \(selectedDeviceLabel(for: selected))",
+                ja: "対象デバイスを切り替えました: \(selectedDeviceLabel(for: selected))"
+            )
+        )
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             diagnoseAudio(for: selected)
         }
@@ -627,7 +855,7 @@ class DiagnosticEngine: ObservableObject {
     func scan() {
         isScanning = true
         logs.removeAll()
-        log("开始扫描...")
+        log(lt(en: "Starting scan...", zh: "开始扫描...", ja: "スキャンを開始します..."))
 
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let previousDeviceID = device?.id
@@ -638,17 +866,30 @@ class DiagnosticEngine: ObservableObject {
             }
             let hasBTOn = btPower.succeeded && btPower.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
                 || btSysProf.output.contains("State: On")
-            log("蓝牙: \(hasBTOn ? "已开启" : "未开启")")
+            log(
+                lt(
+                    en: "Bluetooth: \(hasBTOn ? "On" : "Off")",
+                    zh: "蓝牙: \(hasBTOn ? "已开启" : "未开启")",
+                    ja: "Bluetooth: \(hasBTOn ? "オン" : "オフ")"
+                )
+            )
             DispatchQueue.main.async { self.bluetoothOn = hasBTOn }
             if !hasBTOn {
-                log("蓝牙未开启", isError: true)
+                log(lt(en: "Bluetooth is off", zh: "蓝牙未开启", ja: "Bluetooth がオフです"), isError: true)
                 DispatchQueue.main.async { self.isScanning = false }
                 return
             }
 
             let btInfoResult = runShell("system_profiler SPBluetoothDataType")
             guard btInfoResult.succeeded else {
-                log("读取蓝牙设备信息失败\(commandFailureSuffix(btInfoResult))", isError: true)
+                log(
+                    lt(
+                        en: "Failed to read Bluetooth device info\(commandFailureSuffix(btInfoResult))",
+                        zh: "读取蓝牙设备信息失败\(commandFailureSuffix(btInfoResult))",
+                        ja: "Bluetooth デバイス情報の読み取りに失敗しました\(commandFailureSuffix(btInfoResult))"
+                    ),
+                    isError: true
+                )
                 DispatchQueue.main.async { self.isScanning = false }
                 return
             }
@@ -714,22 +955,48 @@ class DiagnosticEngine: ObservableObject {
             }
 
             if devices.isEmpty {
-                self.log("未找到已连接的 AirPods", isError: true)
+                self.log(
+                    lt(
+                        en: "No connected headset was found",
+                        zh: "未找到已连接的蓝牙耳机",
+                        ja: "接続中のヘッドセットが見つかりません"
+                    ),
+                    isError: true
+                )
                 DispatchQueue.main.async { self.isScanning = false }
                 return
             }
 
             if devices.count > 1 {
-                self.log("检测到 \(devices.count) 台 AirPods，可在设备卡片中切换目标设备")
+                self.log(
+                    lt(
+                        en: "Detected \(devices.count) compatible headsets. You can switch the target device in the device card.",
+                        zh: "检测到 \(devices.count) 台可修复的蓝牙耳机，可在设备卡片中切换目标设备",
+                        ja: "対応ヘッドセットを \(devices.count) 台検出しました。デバイスカードで対象を切り替えられます。"
+                    )
+                )
             }
 
             guard let selectedDevice else {
-                self.log("未找到可用的目标设备", isError: true)
+                self.log(
+                    lt(
+                        en: "No usable target device was found",
+                        zh: "未找到可用的目标设备",
+                        ja: "使用可能な対象デバイスが見つかりません"
+                    ),
+                    isError: true
+                )
                 DispatchQueue.main.async { self.isScanning = false }
                 return
             }
 
-            self.log("已连接: \(self.selectedDeviceLabel(for: selectedDevice))")
+            self.log(
+                lt(
+                    en: "Connected: \(self.selectedDeviceLabel(for: selectedDevice))",
+                    zh: "已连接: \(self.selectedDeviceLabel(for: selectedDevice))",
+                    ja: "接続済み: \(self.selectedDeviceLabel(for: selectedDevice))"
+                )
+            )
             self.diagnoseAudio(for: selectedDevice)
             DispatchQueue.main.async { self.isScanning = false }
         }
@@ -749,29 +1016,84 @@ class DiagnosticEngine: ObservableObject {
             }
             diag.isDefaultOutput = defaultOutputDeviceID() == audioOutput.id
         case .ambiguous:
-            log("检测到多个与 \(selectedDeviceLabel(for: device)) 匹配的音频输出，请先在系统声音设置里选中目标设备", isError: true)
+            log(
+                lt(
+                    en: "Multiple audio outputs match \(selectedDeviceLabel(for: device)). Select the target in System Settings first.",
+                    zh: "检测到多个与 \(selectedDeviceLabel(for: device)) 匹配的音频输出，请先在系统声音设置里选中目标设备",
+                    ja: "\(selectedDeviceLabel(for: device)) に一致する音声出力が複数あります。先にシステム設定で対象を選んでください。"
+                ),
+                isError: true
+            )
         case .notFound:
-            log("未在音频输出列表中找到 \(selectedDeviceLabel(for: device))", isError: true)
+            log(
+                lt(
+                    en: "Could not find \(selectedDeviceLabel(for: device)) in the audio output list",
+                    zh: "未在音频输出列表中找到 \(selectedDeviceLabel(for: device))",
+                    ja: "音声出力一覧に \(selectedDeviceLabel(for: device)) が見つかりません"
+                ),
+                isError: true
+            )
         }
 
         let volumeResult = runShell("osascript -e 'output volume of (get volume settings)'")
         if volumeResult.succeeded {
             diag.volume = volumeResult.output
         } else {
-            log("读取系统音量失败\(commandFailureSuffix(volumeResult))", isError: true)
+            log(
+                lt(
+                    en: "Failed to read system volume\(commandFailureSuffix(volumeResult))",
+                    zh: "读取系统音量失败\(commandFailureSuffix(volumeResult))",
+                    ja: "システム音量の読み取りに失敗しました\(commandFailureSuffix(volumeResult))"
+                ),
+                isError: true
+            )
         }
 
         let mutedResult = runShell("osascript -e 'output muted of (get volume settings)'")
         if mutedResult.succeeded {
             diag.isMuted = mutedResult.output == "true"
         } else {
-            log("读取静音状态失败\(commandFailureSuffix(mutedResult))", isError: true)
+            log(
+                lt(
+                    en: "Failed to read mute state\(commandFailureSuffix(mutedResult))",
+                    zh: "读取静音状态失败\(commandFailureSuffix(mutedResult))",
+                    ja: "ミュート状態の読み取りに失敗しました\(commandFailureSuffix(mutedResult))"
+                ),
+                isError: true
+            )
         }
 
-        log("模式: \(diag.modeLabel) | 音量: \(diag.volume)%\(diag.isMuted ? " (静音)" : "")")
-        if !diag.isDefaultOutput { log("\(selectedDeviceLabel(for: device)) 非当前输出设备", isError: true) }
-        if diag.isMuted { log("系统已静音", isError: true) }
-        if diag.isDefaultOutput, diag.isReducedQualityMode { log("当前输出模式异常：\(diag.modeLabel)", isError: true) }
+        let modeLabel = diag.modeLabel(in: language)
+        log(
+            lt(
+                en: "Mode: \(modeLabel) | Volume: \(diag.volume)%\(diag.isMuted ? " (muted)" : "")",
+                zh: "模式: \(modeLabel) | 音量: \(diag.volume)%\(diag.isMuted ? " (静音)" : "")",
+                ja: "モード: \(modeLabel) | 音量: \(diag.volume)%\(diag.isMuted ? " (ミュート)" : "")"
+            )
+        )
+        if !diag.isDefaultOutput {
+            log(
+                lt(
+                    en: "\(selectedDeviceLabel(for: device)) is not the current output device",
+                    zh: "\(selectedDeviceLabel(for: device)) 非当前输出设备",
+                    ja: "\(selectedDeviceLabel(for: device)) は現在の出力デバイスではありません"
+                ),
+                isError: true
+            )
+        }
+        if diag.isMuted {
+            log(lt(en: "System output is muted", zh: "系统已静音", ja: "システム出力はミュートです"), isError: true)
+        }
+        if diag.isDefaultOutput, diag.isReducedQualityMode {
+            log(
+                lt(
+                    en: "Current output mode is degraded: \(modeLabel)",
+                    zh: "当前输出模式异常：\(modeLabel)",
+                    ja: "現在の出力モードが劣化しています: \(modeLabel)"
+                ),
+                isError: true
+            )
+        }
         DispatchQueue.main.async { self.diagnosis = diag }
         return diag
     }
@@ -835,10 +1157,24 @@ class DiagnosticEngine: ObservableObject {
         case .matched(let audioOutput):
             return switchOutputDevice(to: audioOutput)
         case .ambiguous:
-            log("无法唯一定位 \(selectedDeviceLabel(for: device)) 的音频输出，请先在系统声音设置中选中目标设备", isError: true)
+            log(
+                lt(
+                    en: "Cannot uniquely resolve the audio output for \(selectedDeviceLabel(for: device)). Select it in System Settings first.",
+                    zh: "无法唯一定位 \(selectedDeviceLabel(for: device)) 的音频输出，请先在系统声音设置中选中目标设备",
+                    ja: "\(selectedDeviceLabel(for: device)) の音声出力を一意に特定できません。先にシステム設定で選んでください。"
+                ),
+                isError: true
+            )
             return false
         case .notFound:
-            log("未找到 \(selectedDeviceLabel(for: device)) 的音频输出", isError: true)
+            log(
+                lt(
+                    en: "No audio output was found for \(selectedDeviceLabel(for: device))",
+                    zh: "未找到 \(selectedDeviceLabel(for: device)) 的音频输出",
+                    ja: "\(selectedDeviceLabel(for: device)) の音声出力が見つかりません"
+                ),
+                isError: true
+            )
             return false
         }
     }
@@ -853,44 +1189,63 @@ class DiagnosticEngine: ObservableObject {
         settleStep: String,
         settleProgress: Double
     ) -> Bool {
-        var shouldRestoreOutputMute = false
-        let muteStateResult = runShell("osascript -e 'output muted of (get volume settings)'")
-        if muteStateResult.succeeded {
-            if muteStateResult.output != "true" {
-                if runCommand("osascript -e 'set volume with output muted'", failureMessage: "临时静音失败") {
-                    shouldRestoreOutputMute = true
-                }
-            }
-        } else {
-            log("读取静音状态失败\(commandFailureSuffix(muteStateResult))", isError: true)
-        }
-        defer {
-            if shouldRestoreOutputMute {
-                _ = runCommand("osascript -e 'set volume without output muted'", failureMessage: "恢复静音状态失败")
-            }
-        }
-
+        reinforceQuietOutputProtection()
         step(fallbackStep, progress: fallbackProgress)
         if let fallback = fallbackAudioOutputDevice(excluding: device.name) {
+            reinforceQuietOutputProtection()
             if switchOutputDevice(to: fallback) {
-                log("已切换到 \(fallback.name)")
+                log(
+                    lt(
+                        en: "Switched to \(fallback.name)",
+                        zh: "已切换到 \(fallback.name)",
+                        ja: "\(fallback.name) に切り替えました"
+                    )
+                )
                 Thread.sleep(forTimeInterval: 1.0)
             } else {
-                log("切换到 \(fallback.name) 失败，继续尝试重选 \(device.name)", isError: true)
+                log(
+                    lt(
+                        en: "Failed to switch to \(fallback.name). Will keep trying to reselect \(device.name).",
+                        zh: "切换到 \(fallback.name) 失败，继续尝试重选 \(device.name)",
+                        ja: "\(fallback.name) への切り替えに失敗しました。\(device.name) の再選択を続けます。"
+                    ),
+                    isError: true
+                )
             }
         } else {
-            log("未找到可用的备用输出，直接重选 \(device.name)")
+            log(
+                lt(
+                    en: "No fallback output was found. Reselecting \(device.name) directly.",
+                    zh: "未找到可用的备用输出，直接重选 \(device.name)",
+                    ja: "使える代替出力が見つからないため、\(device.name) を直接再選択します。"
+                )
+            )
         }
 
         step(targetStep, progress: targetProgress)
+        reinforceQuietOutputProtection()
         let ok = switchToSelectedAirPodsOutput(device)
         if ok {
-            log("已切换到 \(selectedDeviceLabel(for: device))")
+            log(
+                lt(
+                    en: "Switched to \(selectedDeviceLabel(for: device))",
+                    zh: "已切换到 \(selectedDeviceLabel(for: device))",
+                    ja: "\(selectedDeviceLabel(for: device)) に切り替えました"
+                )
+            )
         } else {
-            log("切换到 \(selectedDeviceLabel(for: device)) 失败", isError: true)
+            log(
+                lt(
+                    en: "Failed to switch to \(selectedDeviceLabel(for: device))",
+                    zh: "切换到 \(selectedDeviceLabel(for: device)) 失败",
+                    ja: "\(selectedDeviceLabel(for: device)) への切り替えに失敗しました"
+                ),
+                isError: true
+            )
         }
 
         step(settleStep, progress: settleProgress)
+        reinforceQuietOutputProtection()
         Thread.sleep(forTimeInterval: 1.0)
         return ok
     }
@@ -901,38 +1256,55 @@ class DiagnosticEngine: ObservableObject {
         guard let dev = device else { return }
         beginFix()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-
-            step("检查静音状态...", progress: 0.05)
-            Thread.sleep(forTimeInterval: 0.3)
-            if diagnosis.isMuted {
-                step("取消静音...", progress: 0.1)
-                _ = runCommand("osascript -e 'set volume without output muted'", failureMessage: "取消静音失败")
+            let startingDiagnosis = self.diagnoseAudio(for: dev)
+            let originalOutputState = currentOutputSafetyState()
+            var desiredOutputState = originalOutputState
+            if var state = desiredOutputState {
+                applyCorrectiveOutputAdjustments(to: &state, basedOn: startingDiagnosis)
+                desiredOutputState = state
+            }
+            defer {
+                if let state = desiredOutputState {
+                    restoreOutputSafetyState(state)
+                }
             }
 
-            step("检查音量...", progress: 0.15)
-            Thread.sleep(forTimeInterval: 0.3)
-            if let vol = Int(diagnosis.volume), vol < 10 {
-                step("调高音量至 50%...", progress: 0.2)
-                _ = runCommand("osascript -e 'set volume output volume 50'", failureMessage: "调整音量失败")
-            }
-
+            step(
+                lt(en: "Protecting current output...", zh: "保护当前输出...", ja: "現在の出力を保護しています..."),
+                progress: 0.05
+            )
+            reinforceQuietOutputProtection()
             let ok = refreshAudioRoute(
                 for: dev,
-                fallbackStep: "切换到备用输出...",
+                fallbackStep: lt(en: "Switching to fallback output...", zh: "切换到备用输出...", ja: "代替出力に切り替えています..."),
                 fallbackProgress: 0.3,
-                targetStep: "切换输出到 AirPods...",
+                targetStep: lt(en: "Switching back to the target headset...", zh: "切换输出到目标耳机...", ja: "対象ヘッドセットへ戻しています..."),
                 targetProgress: 0.6,
-                settleStep: "等待音频通道建立...",
+                settleStep: lt(en: "Waiting for the audio path to settle...", zh: "等待音频通道建立...", ja: "音声経路の確立を待っています..."),
                 settleProgress: 0.75
             )
 
-            step("验证修复结果...", progress: 0.9)
+            if let state = desiredOutputState {
+                step(
+                    lt(en: "Restoring user output settings...", zh: "恢复用户音量设置...", ja: "ユーザーの出力設定を復元しています..."),
+                    progress: 0.85
+                )
+                restoreOutputSafetyState(state)
+            }
+            step(lt(en: "Verifying result...", zh: "验证修复结果...", ja: "結果を確認しています..."), progress: 0.9)
             self.diagnoseAudio(for: dev)
 
             if ok {
-                step("音频路由已刷新", progress: 1.0)
+                step(lt(en: "Audio route refreshed", zh: "音频路由已刷新", ja: "音声ルートを更新しました"), progress: 1.0)
             } else {
-                step("切换失败，试「重启音频」或「重连蓝牙」", progress: 1.0)
+                step(
+                    lt(
+                        en: "Output switching failed. Try restarting audio or reconnecting Bluetooth.",
+                        zh: "切换失败，试「重启音频」或「重连蓝牙」",
+                        ja: "切り替えに失敗しました。音声サービス再起動または Bluetooth 再接続を試してください。"
+                    ),
+                    progress: 1.0
+                )
             }
             endFix()
         }
@@ -942,72 +1314,118 @@ class DiagnosticEngine: ObservableObject {
     func restartAudioService() {
         beginFix()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            step("停止音频服务...", progress: 0.15)
+            let originalOutputState = currentOutputSafetyState()
+            defer {
+                if let state = originalOutputState {
+                    restoreOutputSafetyState(state)
+                }
+            }
+
+            step(lt(en: "Protecting current output...", zh: "保护当前输出...", ja: "現在の出力を保護しています..."), progress: 0.05)
+            reinforceQuietOutputProtection()
+            step(lt(en: "Stopping the audio service...", zh: "停止音频服务...", ja: "音声サービスを停止しています..."), progress: 0.15)
+            reinforceQuietOutputProtection()
             guard restartCoreAudioService() else {
-                step("重启音频服务失败", progress: 1.0)
+                step(lt(en: "Failed to restart the audio service", zh: "重启音频服务失败", ja: "音声サービスの再起動に失敗しました"), progress: 1.0)
                 endFix()
                 return
             }
 
-            step("等待服务重启...", progress: 0.35)
+            step(lt(en: "Waiting for the service to restart...", zh: "等待服务重启...", ja: "サービスの再起動を待っています..."), progress: 0.35)
             Thread.sleep(forTimeInterval: 1.5)
-            step("音频服务恢复中...", progress: 0.55)
+            step(lt(en: "Audio service is recovering...", zh: "音频服务恢复中...", ja: "音声サービスの復旧中..."), progress: 0.55)
             Thread.sleep(forTimeInterval: 1.5)
 
-            step("验证音频状态...", progress: 0.8)
+            step(lt(en: "Verifying audio state...", zh: "验证音频状态...", ja: "音声状態を確認しています..."), progress: 0.8)
             Thread.sleep(forTimeInterval: 0.5)
+            if let state = originalOutputState {
+                restoreOutputSafetyState(state)
+            }
             if let dev = device {
                 self.diagnoseAudio(for: dev)
             }
 
-            step("音频服务已重启", progress: 1.0)
+            step(lt(en: "Audio service restarted", zh: "音频服务已重启", ja: "音声サービスを再起動しました"), progress: 1.0)
             endFix()
         }
     }
 
     // 硬修复: 断开重连蓝牙
     func reconnectBluetooth() {
-        guard ensureBlueutilAvailable(for: "蓝牙重连") else { return }
+        guard ensureBlueutilAvailable(for: lt(en: "Bluetooth reconnect", zh: "蓝牙重连", ja: "Bluetooth 再接続")) else { return }
         guard let dev = device else {
-            log("未找到可修复的设备", isError: true); return
+            log(lt(en: "No repair target was found", zh: "未找到可修复的设备", ja: "修復対象のデバイスが見つかりません"), isError: true); return
         }
         guard let safeMac = sanitizedBluetoothAddress(for: dev) else {
-            log("蓝牙地址无效或缺失", isError: true); return
+            log(lt(en: "Bluetooth address is invalid or missing", zh: "蓝牙地址无效或缺失", ja: "Bluetooth アドレスが無効か不足しています"), isError: true); return
         }
         beginFix()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            step("断开 AirPods...", progress: 0.1)
+            let originalOutputState = currentOutputSafetyState()
+            defer {
+                if let state = originalOutputState {
+                    restoreOutputSafetyState(state)
+                }
+            }
+
+            step(lt(en: "Protecting current output...", zh: "保护当前输出...", ja: "現在の出力を保護しています..."), progress: 0.05)
+            reinforceQuietOutputProtection()
+            step(lt(en: "Disconnecting the target headset...", zh: "断开目标耳机...", ja: "対象ヘッドセットを切断しています..."), progress: 0.1)
+            reinforceQuietOutputProtection()
             let disconnectResult = runBlueutil(["--disconnect", safeMac])
             let disconnectSucceeded = disconnectResult.succeeded
             if !disconnectSucceeded {
-                log("断开蓝牙设备失败\(commandFailureSuffix(disconnectResult))", isError: true)
+                log(
+                    lt(
+                        en: "Failed to disconnect the Bluetooth device\(commandFailureSuffix(disconnectResult))",
+                        zh: "断开蓝牙设备失败\(commandFailureSuffix(disconnectResult))",
+                        ja: "Bluetooth デバイスの切断に失敗しました\(commandFailureSuffix(disconnectResult))"
+                    ),
+                    isError: true
+                )
             }
 
-            step("等待断开完成...", progress: 0.2)
+            step(lt(en: "Waiting for disconnect...", zh: "等待断开完成...", ja: "切断完了を待っています..."), progress: 0.2)
             Thread.sleep(forTimeInterval: 1.5)
-            step("已断开，准备重连...", progress: 0.3)
+            step(lt(en: "Disconnected. Preparing to reconnect...", zh: "已断开，准备重连...", ja: "切断しました。再接続を準備しています..."), progress: 0.3)
             Thread.sleep(forTimeInterval: 1.5)
 
-            step("重新连接 AirPods...", progress: 0.4)
+            step(lt(en: "Reconnecting the target headset...", zh: "重新连接目标耳机...", ja: "対象ヘッドセットを再接続しています..."), progress: 0.4)
+            reinforceQuietOutputProtection()
             let reconnectResult = runBlueutil(["--connect", safeMac])
             guard reconnectResult.succeeded else {
-                log("重新连接蓝牙设备失败\(commandFailureSuffix(reconnectResult))", isError: true)
-                step(disconnectSucceeded ? "蓝牙重连失败" : "蓝牙断开/重连失败", progress: 1.0)
+                log(
+                    lt(
+                        en: "Failed to reconnect the Bluetooth device\(commandFailureSuffix(reconnectResult))",
+                        zh: "重新连接蓝牙设备失败\(commandFailureSuffix(reconnectResult))",
+                        ja: "Bluetooth デバイスの再接続に失敗しました\(commandFailureSuffix(reconnectResult))"
+                    ),
+                    isError: true
+                )
+                step(
+                    disconnectSucceeded
+                        ? lt(en: "Bluetooth reconnect failed", zh: "蓝牙重连失败", ja: "Bluetooth の再接続に失敗しました")
+                        : lt(en: "Bluetooth disconnect/reconnect failed", zh: "蓝牙断开/重连失败", ja: "Bluetooth の切断/再接続に失敗しました"),
+                    progress: 1.0
+                )
                 endFix()
                 return
             }
 
-            step("等待蓝牙握手...", progress: 0.5)
+            step(lt(en: "Waiting for Bluetooth handshake...", zh: "等待蓝牙握手...", ja: "Bluetooth ハンドシェイクを待っています..."), progress: 0.5)
             Thread.sleep(forTimeInterval: 2)
-            step("建立音频通道...", progress: 0.65)
+            step(lt(en: "Establishing audio path...", zh: "建立音频通道...", ja: "音声経路を確立しています..."), progress: 0.65)
             Thread.sleep(forTimeInterval: 2)
-            step("连接稳定中...", progress: 0.8)
+            step(lt(en: "Stabilizing connection...", zh: "连接稳定中...", ja: "接続を安定化しています..."), progress: 0.8)
             Thread.sleep(forTimeInterval: 1)
 
-            step("验证连接状态...", progress: 0.9)
+            step(lt(en: "Verifying connection...", zh: "验证连接状态...", ja: "接続状態を確認しています..."), progress: 0.9)
+            if let state = originalOutputState {
+                restoreOutputSafetyState(state)
+            }
             self.diagnoseAudio(for: dev)
 
-            step("蓝牙重连完成", progress: 1.0)
+            step(lt(en: "Bluetooth reconnect finished", zh: "蓝牙重连完成", ja: "Bluetooth の再接続が完了しました"), progress: 1.0)
             endFix()
         }
     }
@@ -1019,105 +1437,138 @@ class DiagnosticEngine: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
 
             // ===== 阶段 1: 软修复 (0% ~ 30%) =====
-            step("开始修复：读取当前音频状态...", progress: 0.03)
+            step(lt(en: "Repair started: reading current audio state...", zh: "开始修复：读取当前音频状态...", ja: "修復開始: 現在の音声状態を読み取っています..."), progress: 0.03)
             let currentDiagnosis = self.diagnoseAudio(for: dev)
-
-            step("开始修复：检查静音状态...", progress: 0.05)
-            Thread.sleep(forTimeInterval: 0.3)
-            if currentDiagnosis.isMuted {
-                step("取消静音...", progress: 0.08)
-                _ = runCommand("osascript -e 'set volume without output muted'", failureMessage: "取消静音失败")
+            let originalOutputState = currentOutputSafetyState()
+            var desiredOutputState = originalOutputState
+            if var state = desiredOutputState {
+                applyCorrectiveOutputAdjustments(to: &state, basedOn: currentDiagnosis)
+                desiredOutputState = state
+            }
+            defer {
+                if let state = desiredOutputState {
+                    restoreOutputSafetyState(state)
+                }
             }
 
-            step("检查音量...", progress: 0.12)
-            Thread.sleep(forTimeInterval: 0.3)
-            if let vol = currentDiagnosis.volumePercent, vol < 10 {
-                step("调高音量至 50%...", progress: 0.15)
-                _ = runCommand("osascript -e 'set volume output volume 50'", failureMessage: "调整音量失败")
-            }
-
+            step(lt(en: "Repair started: protecting current output...", zh: "开始修复：保护当前输出...", ja: "修復開始: 現在の出力を保護しています..."), progress: 0.05)
+            reinforceQuietOutputProtection()
             _ = refreshAudioRoute(
                 for: dev,
-                fallbackStep: "刷新音频路由...",
+                fallbackStep: lt(en: "Refreshing the audio route...", zh: "刷新音频路由...", ja: "音声ルートを更新しています..."),
                 fallbackProgress: 0.20,
-                targetStep: "重选 AirPods 输出...",
+                targetStep: lt(en: "Reselecting the target headset output...", zh: "重选目标耳机输出...", ja: "対象ヘッドセット出力を再選択しています..."),
                 targetProgress: 0.24,
-                settleStep: "等待音频通道建立...",
+                settleStep: lt(en: "Waiting for the audio path to settle...", zh: "等待音频通道建立...", ja: "音声経路の確立を待っています..."),
                 settleProgress: 0.28
             )
 
-            step("软修复完成，验证状态...", progress: 0.30)
+            if let state = desiredOutputState {
+                step(lt(en: "Restoring user output settings...", zh: "恢复用户音量设置...", ja: "ユーザーの出力設定を復元しています..."), progress: 0.29)
+                restoreOutputSafetyState(state)
+            }
+            step(lt(en: "Soft repair finished. Verifying state...", zh: "软修复完成，验证状态...", ja: "ソフト修復が完了しました。状態を確認しています..."), progress: 0.30)
             let softDiagnosis = self.diagnoseAudio(for: dev)
 
             if !softDiagnosis.hasIssue {
-                step("软修复已解决问题", progress: 1.0)
+                step(lt(en: "Soft repair resolved the issue", zh: "软修复已解决问题", ja: "ソフト修復で問題が解決しました"), progress: 1.0)
                 endFix()
                 return
             }
 
             // ===== 阶段 2: 中修复 (30% ~ 60%) =====
-            step("软修复未解决，重启音频服务...", progress: 0.35)
+            reinforceQuietOutputProtection()
+            step(lt(en: "Soft repair was not enough. Restarting the audio service...", zh: "软修复未解决，重启音频服务...", ja: "ソフト修復では解決しませんでした。音声サービスを再起動しています..."), progress: 0.35)
             let audioRestarted = restartCoreAudioService()
 
             if audioRestarted {
-                step("等待服务重启...", progress: 0.45)
+                step(lt(en: "Waiting for the service to restart...", zh: "等待服务重启...", ja: "サービスの再起動を待っています..."), progress: 0.45)
                 Thread.sleep(forTimeInterval: 1.5)
-                step("音频服务恢复中...", progress: 0.55)
+                step(lt(en: "Audio service is recovering...", zh: "音频服务恢复中...", ja: "音声サービスの復旧中..."), progress: 0.55)
                 Thread.sleep(forTimeInterval: 1.5)
             } else {
-                step("无法重启音频服务，继续尝试蓝牙重连...", progress: 0.60)
+                step(lt(en: "Could not restart the audio service. Will continue with Bluetooth reconnect...", zh: "无法重启音频服务，继续尝试蓝牙重连...", ja: "音声サービスを再起動できなかったため、Bluetooth 再接続を続けます..."), progress: 0.60)
             }
 
-            step("中修复完成，验证状态...", progress: 0.60)
+            if let state = desiredOutputState {
+                step(lt(en: "Restoring user output settings...", zh: "恢复用户音量设置...", ja: "ユーザーの出力設定を復元しています..."), progress: 0.59)
+                restoreOutputSafetyState(state)
+            }
+            step(lt(en: "Medium repair finished. Verifying state...", zh: "中修复完成，验证状态...", ja: "中程度の修復が完了しました。状態を確認しています..."), progress: 0.60)
             let mediumDiagnosis = self.diagnoseAudio(for: dev)
 
             if !mediumDiagnosis.hasIssue {
-                step("中修复已解决问题", progress: 1.0)
+                step(lt(en: "Medium repair resolved the issue", zh: "中修复已解决问题", ja: "中程度の修復で問題が解決しました"), progress: 1.0)
                 endFix()
                 return
             }
 
             // ===== 阶段 3: 硬修复 (60% ~ 100%) =====
-            guard ensureBlueutilAvailable(for: "蓝牙重连") else {
-                step("未找到 blueutil，无法执行蓝牙重连", progress: 1.0)
+            guard ensureBlueutilAvailable(for: lt(en: "Bluetooth reconnect", zh: "蓝牙重连", ja: "Bluetooth 再接続")) else {
+                step(lt(en: "blueutil is unavailable, so Bluetooth reconnect cannot run", zh: "未找到 blueutil，无法执行蓝牙重连", ja: "blueutil がないため Bluetooth 再接続を実行できません"), progress: 1.0)
                 endFix()
                 return
             }
 
             guard let safeMac = sanitizedBluetoothAddress(for: dev) else {
-                step("中修复未解决，但无法获取蓝牙地址", progress: 1.0)
+                step(lt(en: "Medium repair was not enough, but the Bluetooth address is unavailable", zh: "中修复未解决，但无法获取蓝牙地址", ja: "中程度の修復では解決しませんでしたが、Bluetooth アドレスを取得できません"), progress: 1.0)
                 endFix()
                 return
             }
 
-            step("中修复未解决，断开蓝牙...", progress: 0.65)
+            reinforceQuietOutputProtection()
+            step(lt(en: "Medium repair was not enough. Disconnecting Bluetooth...", zh: "中修复未解决，断开蓝牙...", ja: "中程度の修復では解決しませんでした。Bluetooth を切断しています..."), progress: 0.65)
             let disconnectResult = runBlueutil(["--disconnect", safeMac])
             let disconnectSucceeded = disconnectResult.succeeded
             if !disconnectSucceeded {
-                log("断开蓝牙设备失败\(commandFailureSuffix(disconnectResult))", isError: true)
+                log(
+                    lt(
+                        en: "Failed to disconnect the Bluetooth device\(commandFailureSuffix(disconnectResult))",
+                        zh: "断开蓝牙设备失败\(commandFailureSuffix(disconnectResult))",
+                        ja: "Bluetooth デバイスの切断に失敗しました\(commandFailureSuffix(disconnectResult))"
+                    ),
+                    isError: true
+                )
             }
 
-            step("等待蓝牙断开...", progress: 0.72)
+            step(lt(en: "Waiting for Bluetooth disconnect...", zh: "等待蓝牙断开...", ja: "Bluetooth の切断を待っています..."), progress: 0.72)
             Thread.sleep(forTimeInterval: 1.5)
-            step("重新连接 AirPods...", progress: 0.78)
+            step(lt(en: "Reconnecting the target headset...", zh: "重新连接目标耳机...", ja: "対象ヘッドセットを再接続しています..."), progress: 0.78)
+            reinforceQuietOutputProtection()
             let reconnectResult = runBlueutil(["--connect", safeMac])
             guard reconnectResult.succeeded else {
-                log("重新连接蓝牙设备失败\(commandFailureSuffix(reconnectResult))", isError: true)
-                step(disconnectSucceeded ? "硬修复执行失败" : "硬修复未能完成蓝牙重连", progress: 1.0)
+                log(
+                    lt(
+                        en: "Failed to reconnect the Bluetooth device\(commandFailureSuffix(reconnectResult))",
+                        zh: "重新连接蓝牙设备失败\(commandFailureSuffix(reconnectResult))",
+                        ja: "Bluetooth デバイスの再接続に失敗しました\(commandFailureSuffix(reconnectResult))"
+                    ),
+                    isError: true
+                )
+                step(
+                    disconnectSucceeded
+                        ? lt(en: "Hard repair failed", zh: "硬修复执行失败", ja: "ハード修復に失敗しました")
+                        : lt(en: "Hard repair could not complete the Bluetooth reconnect", zh: "硬修复未能完成蓝牙重连", ja: "ハード修復で Bluetooth 再接続を完了できませんでした"),
+                    progress: 1.0
+                )
                 endFix()
                 return
             }
 
-            step("等待蓝牙握手与音频通道建立...", progress: 0.88)
+            step(lt(en: "Waiting for Bluetooth handshake and audio path...", zh: "等待蓝牙握手与音频通道建立...", ja: "Bluetooth ハンドシェイクと音声経路の確立を待っています..."), progress: 0.88)
             Thread.sleep(forTimeInterval: 4.0)
 
-            step("硬修复完成，验证状态...", progress: 0.95)
+            if let state = desiredOutputState {
+                step(lt(en: "Restoring user output settings...", zh: "恢复用户音量设置...", ja: "ユーザーの出力設定を復元しています..."), progress: 0.93)
+                restoreOutputSafetyState(state)
+            }
+            step(lt(en: "Hard repair finished. Verifying state...", zh: "硬修复完成，验证状态...", ja: "ハード修復が完了しました。状態を確認しています..."), progress: 0.95)
             let finalDiagnosis = self.diagnoseAudio(for: dev)
 
             if finalDiagnosis.hasIssue {
-                step("所有修复尝试完毕，仍有问题，建议检查硬件", progress: 1.0)
+                step(lt(en: "All repair attempts finished, but the issue remains. Hardware should be checked next.", zh: "所有修复尝试完毕，仍有问题，建议检查硬件", ja: "すべての修復を試しましたが、まだ問題があります。次はハードウェアを確認してください。"), progress: 1.0)
             } else {
-                step("硬修复已解决问题，AirPods 恢复正常", progress: 1.0)
+                step(lt(en: "Hard repair resolved the issue. The headset is back to normal.", zh: "硬修复已解决问题，目标耳机恢复正常", ja: "ハード修復で問題が解決しました。ヘッドセットは正常に戻りました。"), progress: 1.0)
             }
             endFix()
         }
@@ -1129,7 +1580,7 @@ class DiagnosticEngine: ObservableObject {
 
     func playTestSound() {
         isPlayingTest = true
-        log("播放测试音...")
+        log(lt(en: "Playing test sound...", zh: "播放测试音...", ja: "テスト音を再生しています..."))
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             // 用系统音效测试，简短清脆
             if let sound = NSSound(named: "Ping") {
@@ -1141,7 +1592,7 @@ class DiagnosticEngine: ObservableObject {
                 sound.play()
                 Thread.sleep(forTimeInterval: 1.0)
             }
-            log("测试音播放完毕")
+            log(lt(en: "Test sound finished", zh: "测试音播放完毕", ja: "テスト音の再生が完了しました"))
             DispatchQueue.main.async { self.isPlayingTest = false }
         }
     }
@@ -1170,12 +1621,18 @@ class DiagnosticEngine: ObservableObject {
             old.stop()
         }
 
-        log("启动麦克风监测...")
+        log(lt(en: "Starting microphone monitor...", zh: "启动麦克风监测...", ja: "マイク監視を開始しています..."))
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let nativeFormat = inputNode.inputFormat(forBus: 0)
-        log("麦克风格式: \(Int(nativeFormat.sampleRate))Hz / \(nativeFormat.channelCount)ch")
+        log(
+            lt(
+                en: "Microphone format: \(Int(nativeFormat.sampleRate))Hz / \(nativeFormat.channelCount)ch",
+                zh: "麦克风格式: \(Int(nativeFormat.sampleRate))Hz / \(nativeFormat.channelCount)ch",
+                ja: "マイク形式: \(Int(nativeFormat.sampleRate))Hz / \(nativeFormat.channelCount)ch"
+            )
+        )
 
         var silentFrames = 0
 
@@ -1210,7 +1667,13 @@ class DiagnosticEngine: ObservableObject {
                     silentFrames = 0
                     self.micRetryCount += 1
                     DispatchQueue.main.async {
-                        self.log("检测到静音，重启麦克风引擎 (第\(self.micRetryCount)次)...")
+                        self.log(
+                            self.lt(
+                                en: "Silence detected. Restarting microphone engine (attempt \(self.micRetryCount))...",
+                                zh: "检测到静音，重启麦克风引擎 (第\(self.micRetryCount)次)...",
+                                ja: "無音を検出しました。マイクエンジンを再起動します（\(self.micRetryCount)回目）..."
+                            )
+                        )
                         self.launchMicEngine()
                     }
                     return
@@ -1232,7 +1695,7 @@ class DiagnosticEngine: ObservableObject {
             try engine.start()
             audioEngine = engine
             isMicMonitoring = true
-            log("麦克风监测中...")
+            log(lt(en: "Microphone monitor is running...", zh: "麦克风监测中...", ja: "マイク監視中..."))
 
             // Peak 衰减定时器
             peakDecayTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -1240,7 +1703,14 @@ class DiagnosticEngine: ObservableObject {
                 self.micPeak = max(self.micPeak - 0.1, 0)
             }
         } catch {
-            log("麦克风启动失败: \(error.localizedDescription)", isError: true)
+            log(
+                lt(
+                    en: "Failed to start microphone monitor: \(error.localizedDescription)",
+                    zh: "麦克风启动失败: \(error.localizedDescription)",
+                    ja: "マイク監視の開始に失敗しました: \(error.localizedDescription)"
+                ),
+                isError: true
+            )
         }
     }
 
@@ -1253,7 +1723,7 @@ class DiagnosticEngine: ObservableObject {
         peakDecayTimer = nil
         micLevel = 0
         micPeak = 0
-        log("麦克风监测已停止")
+        log(lt(en: "Microphone monitor stopped", zh: "麦克风监测已停止", ja: "マイク監視を停止しました"))
     }
 }
 
@@ -1365,6 +1835,10 @@ struct ContentView: View {
         engine.allDevices.count > 1 ? device.pickerLabel : device.name
     }
 
+    private func t(en: String, zh: String, ja: String) -> String {
+        localized(engine.language, en: en, zh: zh, ja: ja)
+    }
+
     var body: some View {
         VStack(spacing: DS.sectionSpacing) {
             headerSection
@@ -1408,7 +1882,11 @@ struct ContentView: View {
                     Circle()
                         .fill(engine.bluetoothOn ? Color.blue : Color.gray.opacity(0.5))
                         .frame(width: 6, height: 6)
-                    Text(engine.bluetoothOn ? "蓝牙已连接" : "蓝牙未连接")
+                    Text(
+                        engine.bluetoothOn
+                            ? t(en: "Bluetooth Connected", zh: "蓝牙已连接", ja: "Bluetooth接続済み")
+                            : t(en: "Bluetooth Disconnected", zh: "蓝牙未连接", ja: "Bluetooth未接続")
+                    )
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -1419,6 +1897,21 @@ struct ContentView: View {
                     .scaleEffect(0.6)
                     .frame(width: 14, height: 14)
             }
+            Picker(
+                "Language",
+                selection: Binding(
+                    get: { engine.language },
+                    set: { engine.setLanguage($0) }
+                )
+            ) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.menuLabel).tag(language)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 90)
+            .disabled(engine.isScanning || engine.isFixing)
             Button(action: { engine.scan() }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .medium))
@@ -1441,7 +1934,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(selectedDeviceTitle(dev))
                         .font(.system(size: 13, weight: .semibold))
-                    Text(engine.diagnosis.modeLabel)
+                    Text(engine.diagnosis.modeLabel(in: engine.language))
                         .font(.system(size: 10, design: .rounded))
                         .foregroundColor(.secondary)
                 }
@@ -1450,7 +1943,11 @@ struct ContentView: View {
                     Circle()
                         .fill(engine.diagnosis.hasIssue ? Color.red : Color.green)
                         .frame(width: 6, height: 6)
-                    Text(engine.diagnosis.hasIssue ? "异常" : "正常")
+                    Text(
+                        engine.diagnosis.hasIssue
+                            ? t(en: "Issue", zh: "异常", ja: "要確認")
+                            : t(en: "OK", zh: "正常", ja: "正常")
+                    )
                         .font(.system(size: 10, weight: .medium))
                 }
                 .padding(.horizontal, 8)
@@ -1461,12 +1958,12 @@ struct ContentView: View {
 
             if engine.allDevices.count > 1 {
                 HStack(spacing: 10) {
-                    Text("目标设备")
+                    Text(t(en: "Target Device", zh: "目标设备", ja: "対象デバイス"))
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()
                     Picker(
-                        "目标设备",
+                        t(en: "Target Device", zh: "目标设备", ja: "対象デバイス"),
                         selection: Binding(
                             get: { engine.device?.id ?? "" },
                             set: { engine.selectDevice(withID: $0) }
@@ -1486,10 +1983,10 @@ struct ContentView: View {
 
             // 电量圆环 - 横排
             HStack(spacing: 20) {
-                BatteryRing(label: "左耳", percent: Int(dev.batteryLeft.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
-                BatteryRing(label: "右耳", percent: Int(dev.batteryRight.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
+                BatteryRing(label: t(en: "Left", zh: "左耳", ja: "左"), percent: Int(dev.batteryLeft.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
+                BatteryRing(label: t(en: "Right", zh: "右耳", ja: "右"), percent: Int(dev.batteryRight.replacingOccurrences(of: "%", with: "")) ?? 0, icon: "ear")
                 if dev.batteryCase != "-", let pct = Int(dev.batteryCase.replacingOccurrences(of: "%", with: "")) {
-                    BatteryRing(label: "充电盒", percent: pct, icon: "case")
+                    BatteryRing(label: t(en: "Case", zh: "充电盒", ja: "ケース"), percent: pct, icon: "case")
                 }
             }
         }
@@ -1506,7 +2003,7 @@ struct ContentView: View {
 
     func diagnosisSection(_ dev: AirPodsDevice) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("诊断")
+            Text(t(en: "Diagnosis", zh: "诊断", ja: "診断"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .textCase(.uppercase)
@@ -1514,15 +2011,17 @@ struct ContentView: View {
 
             DiagRow(
                 icon: engine.diagnosis.isDefaultOutput ? "checkmark.circle.fill" : "xmark.circle.fill",
-                label: "输出设备",
-                value: engine.diagnosis.isDefaultOutput ? selectedDeviceTitle(dev) : "非 \(selectedDeviceTitle(dev))",
+                label: t(en: "Output Device", zh: "输出设备", ja: "出力デバイス"),
+                value: engine.diagnosis.isDefaultOutput
+                    ? selectedDeviceTitle(dev)
+                    : t(en: "Not \(selectedDeviceTitle(dev))", zh: "非 \(selectedDeviceTitle(dev))", ja: "\(selectedDeviceTitle(dev)) ではない"),
                 status: engine.diagnosis.isDefaultOutput ? .ok : .warn
             )
             Divider().opacity(0.5)
             DiagRow(
                 icon: "waveform",
-                label: "音频模式",
-                value: engine.diagnosis.modeLabel,
+                label: t(en: "Audio Mode", zh: "音频模式", ja: "音声モード"),
+                value: engine.diagnosis.modeLabel(in: engine.language),
                 status: engine.diagnosis.sampleRateHz == nil || engine.diagnosis.channelCount == nil
                     ? .neutral
                     : (engine.diagnosis.isReducedQualityMode ? .warn : .ok)
@@ -1530,8 +2029,10 @@ struct ContentView: View {
             Divider().opacity(0.5)
             DiagRow(
                 icon: engine.diagnosis.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                label: "静音",
-                value: engine.diagnosis.isMuted ? "已静音" : "关闭",
+                label: t(en: "Mute", zh: "静音", ja: "ミュート"),
+                value: engine.diagnosis.isMuted
+                    ? t(en: "Muted", zh: "已静音", ja: "ミュート中")
+                    : t(en: "Off", zh: "关闭", ja: "オフ"),
                 status: engine.diagnosis.isMuted ? .warn : .ok
             )
             Divider().opacity(0.5)
@@ -1539,7 +2040,7 @@ struct ContentView: View {
             let vol = Int(engine.diagnosis.volume) ?? 0
             DiagRow(
                 icon: "speaker.wave.1.fill",
-                label: "音量",
+                label: t(en: "Volume", zh: "音量", ja: "音量"),
                 value: "\(engine.diagnosis.volume)%",
                 status: vol < 5 ? .warn : .ok
             )
@@ -1557,7 +2058,7 @@ struct ContentView: View {
 
     var audioTestSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("音频测试")
+            Text(t(en: "Audio Tests", zh: "音频测试", ja: "音声テスト"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .textCase(.uppercase)
@@ -1569,12 +2070,12 @@ struct ContentView: View {
                     .foregroundColor(engine.isPlayingTest ? .accentColor : .secondary)
                     .frame(width: 20)
                     .safeSymbolEffectPulse(isActive: engine.isPlayingTest)
-                Text("扬声器测试")
+                Text(t(en: "Speaker Test", zh: "扬声器测试", ja: "スピーカーテスト"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(action: { engine.playTestSound() }) {
-                    Text(engine.isPlayingTest ? "播放中..." : "播放")
+                    Text(engine.isPlayingTest ? t(en: "Playing...", zh: "播放中...", ja: "再生中...") : t(en: "Play", zh: "播放", ja: "再生"))
                         .font(.system(size: 11, weight: .medium))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
@@ -1594,7 +2095,7 @@ struct ContentView: View {
                     .font(.system(size: 14))
                     .foregroundColor(engine.isMicMonitoring ? .red : .secondary)
                     .frame(width: 20)
-                Text("麦克风测试")
+                Text(t(en: "Microphone Test", zh: "麦克风测试", ja: "マイクテスト"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -1605,7 +2106,7 @@ struct ContentView: View {
                         engine.startMicMonitor()
                     }
                 }) {
-                    Text(engine.isMicMonitoring ? "停止" : "开始")
+                    Text(engine.isMicMonitoring ? t(en: "Stop", zh: "停止", ja: "停止") : t(en: "Start", zh: "开始", ja: "開始"))
                         .font(.system(size: 11, weight: .medium))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
@@ -1652,15 +2153,15 @@ struct ContentView: View {
 
                     // 标签
                     HStack {
-                        Text("安静")
+                        Text(t(en: "Quiet", zh: "安静", ja: "静か"))
                             .font(.system(size: 9))
                             .foregroundColor(.secondary.opacity(0.5))
                         Spacer()
-                        Text(micLevelText(engine.micLevel))
+                        Text(micLevelText(engine.micLevel, language: engine.language))
                             .font(.system(size: 10, weight: .medium, design: .rounded))
                             .foregroundColor(micLevelColor(engine.micLevel))
                         Spacer()
-                        Text("响亮")
+                        Text(t(en: "Loud", zh: "响亮", ja: "大きい"))
                             .font(.system(size: 9))
                             .foregroundColor(.secondary.opacity(0.5))
                     }
@@ -1685,12 +2186,12 @@ struct ContentView: View {
         return [.green, .yellow, .orange, .red]
     }
 
-    private func micLevelText(_ level: Float) -> String {
-        if level < 0.05 { return "无信号" }
-        if level < 0.2 { return "微弱" }
-        if level < 0.4 { return "正常" }
-        if level < 0.7 { return "较响" }
-        return "很响"
+    private func micLevelText(_ level: Float, language: AppLanguage) -> String {
+        if level < 0.05 { return localized(language, en: "No Signal", zh: "无信号", ja: "信号なし") }
+        if level < 0.2 { return localized(language, en: "Weak", zh: "微弱", ja: "弱い") }
+        if level < 0.4 { return localized(language, en: "Normal", zh: "正常", ja: "通常") }
+        if level < 0.7 { return localized(language, en: "Loud", zh: "较响", ja: "大きめ") }
+        return localized(language, en: "Very Loud", zh: "很响", ja: "かなり大きい")
     }
 
     private func micLevelColor(_ level: Float) -> Color {
@@ -1756,14 +2257,14 @@ struct ContentView: View {
 
     var actionsSection: some View {
         VStack(spacing: 10) {
-            Text("都设置好了就是不出声音？修复一下")
+            Text(t(en: "Everything looks right but there is still no sound? Try repair.", zh: "都设置好了就是不出声音？修复一下", ja: "設定は合っているのに音が出ませんか？修復を試してください。"))
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
             ActionButton(
-                title: engine.isFixing ? "修复中..." : "一键修复 AirPods",
-                subtitle: "依次尝试：刷新音频路由 → 重启音频服务 → 重连蓝牙",
+                title: engine.isFixing ? t(en: "Repairing...", zh: "修复中...", ja: "修復中...") : t(en: "One-Click Repair", zh: "一键修复耳机音频", ja: "ワンクリック修復"),
+                subtitle: t(en: "Tries in order: refresh route → restart audio service → reconnect Bluetooth", zh: "依次尝试：刷新音频路由 → 重启音频服务 → 重连蓝牙", ja: "順番に実行: 音声ルート更新 → 音声サービス再起動 → Bluetooth再接続"),
                 icon: "arrow.clockwise.circle",
                 style: .primary,
                 action: { engine.runSmartRepair() }
@@ -1779,10 +2280,14 @@ struct ContentView: View {
             Image(systemName: "airpodspro")
                 .font(.system(size: 44, weight: .thin))
                 .foregroundColor(.secondary.opacity(0.4))
-            Text(engine.bluetoothOn ? "未找到 AirPods" : "蓝牙未开启")
+            Text(
+                engine.bluetoothOn
+                    ? t(en: "No compatible headset found", zh: "未找到兼容耳机", ja: "対応するヘッドセットが見つかりません")
+                    : t(en: "Bluetooth Is Off", zh: "蓝牙未开启", ja: "Bluetoothがオフです")
+            )
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(.secondary)
-            Text("确保 AirPods 已取出并靠近 Mac")
+            Text(t(en: "Make sure the headset is out of the case and close to your Mac", zh: "确保 AirPods 已取出并靠近 Mac", ja: "ヘッドセットをケースから出し、Mac の近くに置いてください"))
                 .font(.system(size: 12))
                 .foregroundColor(.secondary.opacity(0.7))
         }
@@ -1807,7 +2312,7 @@ struct ContentView: View {
                         .font(.system(size: 9, weight: .bold))
                         .rotationEffect(.degrees(showLog ? 90 : 0))
                         .foregroundColor(.secondary)
-                    Text("日志")
+                    Text(t(en: "Logs", zh: "日志", ja: "ログ"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
                         .textCase(.uppercase)

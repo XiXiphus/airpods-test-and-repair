@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
 
 permissions:
   contents: write
@@ -24,12 +22,8 @@ jobs:
 
       - name: Derive app version
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          else
-            VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
-            echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
-          fi
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install blueutil
         run: brew install blueutil
@@ -72,34 +66,20 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: ./package-release.sh
 
-      - name: Upload packaged app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: AirPods-Fix-${{ env.APP_VERSION }}
-          path: dist/*.dmg
-          if-no-files-found: error
-
-      - name: Publish tagged release asset
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            notes_file="$RUNNER_TEMP/release-notes.md"
-            gh api \
-              --method POST \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-              -f tag_name="$tag" \
-              -f target_commitish="${GITHUB_SHA}" \
-              --jq '.body' > "$notes_file"
-            gh release edit "$tag" --title "$tag" --notes-file "$notes_file"
-            gh release upload "$tag" dist/*.dmg --clobber
-          else
-            gh release create "$tag" dist/*.dmg --title "$tag" --generate-notes
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete latest --repo "$GITHUB_REPOSITORY" --yes
+            git push origin --delete latest || true
           fi
+          git tag -f latest "$GITHUB_SHA"
+          git push origin latest --force
+          gh release create latest dist/*.dmg \
+            --title "Latest Build (v${{ env.APP_VERSION }})" \
+            --notes "Built from commit ${{ github.sha }} on \`main\`." \
+            --latest
 
       - name: Clean up signing assets
         if: ${{ always() && env.HAS_SIGNING_SECRETS == 'true' }}
